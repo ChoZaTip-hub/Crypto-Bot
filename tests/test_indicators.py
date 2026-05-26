@@ -64,3 +64,9 @@ def test_adx() -> None:
     closes = [100 + i * 0.67 for i in range(30)]
     adx = ADXIndicator().calculate(closes, highs=[c + 2 for c in closes], lows=[c - 2 for c in closes])
     assert adx >= 0
+
+
+def test_adx_flat_market_no_division_error() -> None:
+    closes = [100.0] * 30
+    adx = ADXIndicator().calculate(closes, highs=closes, lows=closes)
+    assert adx == 0.0

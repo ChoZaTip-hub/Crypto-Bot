@@ -14,14 +14,41 @@ from app.db.repositories.market_change_repo import MarketChangeRepository
 from app.db.repositories.signal_repo import SignalRepository
 from app.db.repositories.strategy_decision_repo import StrategyDecisionRepository
 from app.services.learning_service import LearningService
+from app.services.market_analysis_service import MarketAnalysisService
+from app.strategies.base import StrategyInputs
 from app.exchanges.bybit_client import BybitClient
 from app.exchanges.exchange_types import CandleData
 from app.services.audit_service import AuditService
 from app.services.indicator_service import IndicatorService
 from app.services.market_data_service import MarketDataService
+from app.utils.candles import filter_price_outliers
+
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+def _norm_candle_ts(ts: int) -> int:
+    return ts // 1000 if ts > 1_000_000_000_000 else ts
+
+
+def _build_candle_series(candles: list) -> list[dict]:
+    """Sort, dedupe, and normalize timestamps for chart API."""
+    by_time: dict[int, dict] = {}
+    for c in candles:
+        t = _norm_candle_ts(int(c.open_time))
+        o, h, low, cl = float(c.open), float(c.high), float(c.low), float(c.close)
+        if h < low or o <= 0 or cl <= 0:
+            continue
+        by_time[t] = {
+            "time": t,
+            "open": o,
+            "high": max(h, o, cl),
+            "low": min(low, o, cl),
+            "close": cl,
+            "volume": float(c.volume),
+        }
+    return [by_time[t] for t in sorted(by_time)]
 
 
 @router.get("/meta")
@@ -80,6 +107,7 @@ async def dashboard_overview(
     background: BackgroundManagerDep,
     symbol: str = Query("BTCUSDT"),
     timeframe: str = Query("5"),
+    include_ratios: bool = Query(False),
 ) -> dict:
     try:
         symbol = symbol.upper()
@@ -91,7 +119,6 @@ async def dashboard_overview(
         change_repo = MarketChangeRepository(session)
         decision_repo = StrategyDecisionRepository(session)
         learning_svc = LearningService(session, AuditService(session))
-
         latest_signal = await signal_repo.get_latest(symbol)
         latest_decision = (await decision_repo.get_recent_by_symbol(symbol, 1)) or []
         latest_decision = latest_decision[0] if latest_decision else None
@@ -108,8 +135,9 @@ async def dashboard_overview(
             indicators = {}
 
         indicators_all_tf: dict[str, dict] = {}
+        trader_briefing: dict | None = None
         candle_repo = CandleRepository(session)
-        for tf in settings.timeframes:
+        for tf in settings.dashboard_indicator_timeframes:
             tf_candles = await candle_repo.get_by_symbol_and_timeframe(symbol, tf, 120)
             if len(tf_candles) >= 5:
                 tf_ind = ind_svc.compute_from_ohlcv(
@@ -121,6 +149,41 @@ async def dashboard_overview(
                 indicators_all_tf[tf] = {
                     k: float(v) for k, v in tf_ind.items() if isinstance(v, (int, float))
                 }
+
+        if indicators_all_tf:
+            from app.core.constants import SignalAction
+            from app.strategies.base import StrategySignal
+
+            analysis = MarketAnalysisService()
+            action_enum = SignalAction.HOLD
+            if latest_signal:
+                try:
+                    action_enum = SignalAction(latest_signal.action)
+                except ValueError:
+                    pass
+            inputs = StrategyInputs(
+                symbol=symbol,
+                timeframes=indicators_all_tf,
+                regime=latest_decision.regime if latest_decision else None,
+            )
+            sig = StrategySignal(
+                symbol=symbol,
+                action=action_enum,
+                confidence=latest_signal.confidence if latest_signal else 0.0,
+                reason=latest_signal.reason if latest_signal else "",
+                entry_price=latest_signal.entry_price if latest_signal else None,
+                stop_loss=latest_signal.stop_loss if latest_signal else None,
+                take_profit=latest_signal.take_profit if latest_signal else None,
+                risk_reward_ratio=latest_signal.risk_reward_ratio if latest_signal else None,
+            )
+            open_positions = await position_repo.get_open_positions()
+            pos = next((p for p in open_positions if p.symbol == symbol), None)
+            if pos:
+                sig.action = SignalAction.BUY
+                sig.entry_price = pos.entry_price
+                sig.stop_loss = pos.stop_loss
+                sig.take_profit = pos.take_profit
+            trader_briefing = analysis.build_briefing(inputs, sig)
 
         return {
             "bot": {
@@ -163,6 +226,7 @@ async def dashboard_overview(
                 k: float(v) for k, v in indicators.items() if isinstance(v, (int, float))
             },
             "indicators_all_timeframes": indicators_all_tf,
+            "trader_briefing": trader_briefing,
             "signal": _signal_dict(latest_signal, latest_decision),
             "decision_journal": [
                 _decision_dict(d) for d in await decision_repo.get_recent_by_symbol(symbol, 8)
@@ -235,34 +299,20 @@ async def chart_data(
         latest_decisions = await decision_repo.get_recent_by_symbol(symbol, 1)
         latest_decision = latest_decisions[0] if latest_decisions else None
         candles, candle_source = await _load_candles(symbol, timeframe, limit, session, settings)
+        series = _build_candle_series(candles)
+        series, candles_dropped = filter_price_outliers(series)
         ind_svc = IndicatorService(session, AuditService(session))
-        indicators = (
-            ind_svc.compute_from_ohlcv(
-                [c.close for c in candles],
-                [c.high for c in candles],
-                [c.low for c in candles],
-                [c.volume for c in candles],
+        if series:
+            indicators = ind_svc.compute_from_ohlcv(
+                [c["close"] for c in series],
+                [c["high"] for c in series],
+                [c["low"] for c in series],
+                [c["volume"] for c in series],
             )
-            if candles
-            else {}
-        )
+        else:
+            indicators = {}
         latest_signal = await signal_repo.get_latest(symbol)
         open_pos = await PositionRepository(session).get_by_symbol(symbol)
-
-        def _norm_ts(ts: int) -> int:
-            return ts // 1000 if ts > 1_000_000_000_000 else ts
-
-        series = [
-            {
-                "time": _norm_ts(c.open_time),
-                "open": float(c.open),
-                "high": float(c.high),
-                "low": float(c.low),
-                "close": float(c.close),
-                "volume": float(c.volume),
-            }
-            for c in candles
-        ]
 
         trade_plan = None
         trade_levels: list[dict] = []
@@ -312,7 +362,9 @@ async def chart_data(
                     }
                 )
 
-        last_price = float(candles[-1].close) if candles else 0.0
+        last_price = float(series[-1]["close"]) if series else (
+            float(candles[-1].close) if candles else 0.0
+        )
 
         return {
             "symbol": symbol,
@@ -320,6 +372,7 @@ async def chart_data(
             "timeframe_label": label_for_timeframe(timeframe),
             "tradingview_symbol": f"BYBIT:{symbol}",
             "candles": series,
+            "candles_dropped": candles_dropped,
             "candle_source": candle_source,
             "last_price": last_price,
             "trade_levels": trade_levels,
@@ -335,14 +388,36 @@ async def chart_data(
 
 
 @router.post("/refresh-market")
-async def refresh_market(session: SessionDep, settings: SettingsDep) -> dict:
-    """Pull latest candles from Bybit for ALL configured timeframes."""
+async def refresh_market(
+    session: SessionDep,
+    settings: SettingsDep,
+    symbol: str | None = Query(None),
+    timeframe: str | None = Query(None),
+    full: bool = Query(False),
+) -> dict:
+    """Fast: symbol+timeframe only. Slow: full=true loads all pairs and TFs."""
     bybit = BybitClient(settings)
     audit = AuditService(session)
     repo = CandleRepository(session)
     svc = MarketDataService(bybit, repo, audit, settings)
-    counts = await svc.ingest_all()
-    return {"ingested": counts, "source": "bybit", "timeframes": settings.timeframes}
+    if full:
+        counts = await svc.ingest_all()
+        return {
+            "ingested": counts,
+            "source": "bybit",
+            "mode": "full",
+            "timeframes": settings.timeframes,
+        }
+    if symbol and timeframe:
+        counts = await svc.ingest_symbol_tf(symbol.upper(), timeframe)
+        return {"ingested": counts, "source": "bybit", "mode": "single", "symbol": symbol, "timeframe": timeframe}
+    counts = await svc.ingest_cycle()
+    return {
+        "ingested": counts,
+        "source": "bybit",
+        "mode": "cycle",
+        "timeframes": settings.bot_cycle_timeframes,
+    }
 
 
 def _signal_dict(signal, decision=None) -> dict | None:

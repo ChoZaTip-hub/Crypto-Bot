@@ -5,27 +5,9 @@ const TF_LABELS = {
   "60": "1h", "240": "4h", "D": "1D", "W": "1W", "M": "1MN",
 };
 
-let tvWidgetNonce = 0;
 let refreshTimer = null;
-let levelsChart = null;
-let candleSeries = null;
-let levelPriceLines = [];
-let levelsResizeObserver = null;
-let lastLevelsKey = "";
-let candlesAutoFetched = false;
-
-const TV_INTERVAL_MAP = {
-  "1": "1",
-  "3": "3",
-  "5": "5",
-  "15": "15",
-  "30": "30",
-  "60": "60",
-  "240": "240",
-  "D": "D",
-  "W": "W",
-  "M": "M",
-};
+let ratioTimer = null;
+let tvChartKey = "";
 
 function updateTradeLevelsPanel(chartData) {
   const plan = chartData?.trade_plan;
@@ -40,161 +22,97 @@ function updateTradeLevelsPanel(chartData) {
   set("lvlPrice", last);
 }
 
-function destroyLevelsChart() {
-  if (levelsResizeObserver) {
-    levelsResizeObserver.disconnect();
-    levelsResizeObserver = null;
-  }
-  if (levelsChart) {
-    levelsChart.remove();
-    levelsChart = null;
-    candleSeries = null;
-    levelPriceLines = [];
-  }
+function setStatusHint(msg) {
+  const el = $("lastRun");
+  if (el) el.textContent = msg || "";
 }
 
-function renderLevelsChart(chartData, symbol, timeframe) {
-  const container = $("levelsChartContainer");
+function timeframeToTvInterval(tf) {
+  const map = {
+    "1": "1",
+    "3": "3",
+    "5": "5",
+    "15": "15",
+    "30": "30",
+    "60": "60",
+    "240": "240",
+    D: "D",
+    W: "W",
+    M: "M",
+  };
+  return map[tf] || tf;
+}
+
+function renderTradingViewChart(symbol, timeframe, chartData) {
+  const container = $("mainChartContainer");
   const statusEl = $("levelsChartStatus");
   if (!container) return;
 
-  const candles = chartData?.candles || [];
-  const key = `${symbol}:${timeframe}`;
-  if (key !== lastLevelsKey) {
-    destroyLevelsChart();
-    lastLevelsKey = key;
-  }
-
-  if (!candles.length) {
-    destroyLevelsChart();
-    container.innerHTML = '<p class="hint chart-empty">Нет свечей — нажми «Загрузить свечи Bybit» или подожди авто-загрузку</p>';
-    if (statusEl) statusEl.textContent = "";
-    return;
-  }
-
-  if (typeof LightweightCharts === "undefined") {
-    container.innerHTML = '<p class="hint chart-empty">Библиотека TradingView Lightweight Charts не загрузилась</p>';
-    return;
-  }
-
-  container.innerHTML = "";
-  const width = container.clientWidth || 800;
-
-  if (!levelsChart) {
-    levelsChart = LightweightCharts.createChart(container, {
-      width,
-      height: 360,
-      layout: { background: { color: "#0f0f0f" }, textColor: "#d1d5db" },
-      grid: {
-        vertLines: { color: "rgba(242, 242, 242, 0.06)" },
-        horzLines: { color: "rgba(242, 242, 242, 0.06)" },
-      },
-      rightPriceScale: { borderColor: "#243044" },
-      timeScale: { borderColor: "#243044", timeVisible: true, secondsVisible: false },
-    });
-    candleSeries = levelsChart.addCandlestickSeries({
-      upColor: "#22c55e",
-      downColor: "#ef4444",
-      borderVisible: false,
-      wickUpColor: "#22c55e",
-      wickDownColor: "#ef4444",
-    });
-    levelsResizeObserver = new ResizeObserver(() => {
-      if (levelsChart && container.clientWidth > 0) {
-        levelsChart.applyOptions({ width: container.clientWidth });
-      }
-    });
-    levelsResizeObserver.observe(container);
-  }
-
-  candleSeries.setData(
-    candles.map((c) => ({
-      time: c.time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }))
-  );
-
-  levelPriceLines.forEach((pl) => candleSeries.removePriceLine(pl));
-  levelPriceLines = [];
-
-  const levels = chartData?.trade_levels || [];
-  levels.forEach((lvl) => {
-    const lineStyle =
-      lvl.lineStyle === "dashed"
-        ? LightweightCharts.LineStyle.Dashed
-        : LightweightCharts.LineStyle.Solid;
-    levelPriceLines.push(
-      candleSeries.createPriceLine({
-        price: lvl.price,
-        color: lvl.color,
-        lineWidth: lvl.name === "Entry" ? 3 : 2,
-        lineStyle,
-        axisLabelVisible: true,
-        title: lvl.name,
-      })
-    );
-  });
-
-  levelsChart.timeScale().fitContent();
-
-  if (statusEl) {
-    const src = chartData?.trade_plan?.source === "open_position" ? "открытая позиция" : "последний сигнал";
-    statusEl.textContent = levels.length
-      ? `${symbol} · ${tfLabel(timeframe)} · ${levels.length} линии (${src})`
-      : `${symbol} · ${tfLabel(timeframe)} · свечи загружены, уровни после «Один цикл»`;
-  }
-}
-
-function loadTradingViewChart(symbol, interval, chartData) {
-  const wrap = $("tvChartContainer");
-  if (!wrap) return;
-
-  tvWidgetNonce += 1;
-  const nonce = tvWidgetNonce;
-  const tvSymbol = chartData?.tradingview_symbol || symbolToTradingView(symbol);
-  const tvInterval = TV_INTERVAL_MAP[interval] || interval || "5";
-
+  const tvSym = chartData?.tradingview_symbol || symbolToTradingView(symbol);
   const link = $("tvOpenLink");
   if (link) {
-    link.href = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol)}&interval=${tvInterval}`;
+    link.href = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym)}&interval=${timeframeToTvInterval(timeframe)}`;
   }
 
-  wrap.innerHTML = `<div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div>`;
+  const key = `${tvSym}:${timeframeToTvInterval(timeframe)}`;
+  if (key === tvChartKey && container.querySelector(".tv-embed")) {
+    updateTvChartFootnote(chartData, symbol, timeframe, statusEl);
+    return;
+  }
+  tvChartKey = key;
+  container.innerHTML = "";
+
+  const wrap = document.createElement("div");
+  wrap.className = "tradingview-widget-container tv-embed";
+  const inner = document.createElement("div");
+  inner.className = "tradingview-widget-container__widget";
+  wrap.appendChild(inner);
 
   const script = document.createElement("script");
   script.type = "text/javascript";
   script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
   script.async = true;
-  script.text = JSON.stringify({
+  script.innerHTML = JSON.stringify({
+    autosize: true,
+    symbol: tvSym,
+    interval: timeframeToTvInterval(timeframe),
+    timezone: "Etc/UTC",
+    theme: "dark",
+    style: "1",
+    locale: "ru",
+    enable_publishing: false,
     allow_symbol_change: false,
     calendar: false,
-    details: false,
     hide_side_toolbar: false,
     hide_top_toolbar: false,
     hide_legend: false,
     hide_volume: false,
-    interval: tvInterval,
-    locale: "ru",
-    save_image: true,
-    style: "1",
-    symbol: tvSymbol,
-    theme: "dark",
-    timezone: "Etc/UTC",
-    backgroundColor: "#0F0F0F",
-    gridColor: "rgba(242, 242, 242, 0.06)",
-    watchlist: [],
-    withdateranges: true,
-    compareSymbols: [],
-    studies: [],
-    autosize: true,
+    save_image: false,
+    support_host: "https://www.tradingview.com",
   });
-  script.onload = () => {
-    if (nonce !== tvWidgetNonce) script.remove();
-  };
   wrap.appendChild(script);
+  container.appendChild(wrap);
+
+  updateTvChartFootnote(chartData, symbol, timeframe, statusEl);
+}
+
+function updateTvChartFootnote(chartData, symbol, timeframe, statusEl) {
+  if (!statusEl) return;
+  const levels = chartData?.trade_levels || [];
+  const dropped = chartData?.candles_dropped || 0;
+  const src = chartData?.trade_plan?.source === "open_position" ? "открытая позиция" : "последний сигнал";
+  let msg = `TradingView · ${symbol} · ${tfLabel(timeframe)}`;
+  if (levels.length) {
+    msg += ` · Entry/SL/TP в панели (${src})`;
+  }
+  if (dropped > 0) {
+    msg += ` · отфильтровано ${dropped} битых свечей`;
+  }
+  statusEl.textContent = msg;
+}
+
+function renderMainChart(chartData, symbol, timeframe) {
+  renderTradingViewChart(symbol, timeframe, chartData);
 }
 
 function updateChartChrome(chartData, symbol, timeframe) {
@@ -205,35 +123,29 @@ function updateChartChrome(chartData, symbol, timeframe) {
   updateTradeLevelsPanel(chartData);
 
   if (status) {
+    const srcLabel =
+      {
+        database: "БД (Bybit)",
+        bybit_live: "Bybit (онлайн)",
+        empty: "нет данных",
+      }[chartData.candle_source] || chartData.candle_source || "data";
+    const dropped = chartData?.candles_dropped ? ` · −${chartData.candles_dropped} выбросов` : "";
     status.textContent = candles.length
-      ? `${symbol} · ${tfLabel(timeframe)} · ${chartData.candle_source || "data"} · ${candles.length} свечей`
-      : "Загрузка свечей с Bybit…";
+      ? `${symbol} · ${tfLabel(timeframe)} · TradingView · ${srcLabel}${dropped}`
+      : "TradingView · загрузка…";
   }
 
   const levels = chartData?.trade_levels || [];
-  if (legend) {
-    legend.textContent = levels.length
-      ? "Верхний график (TradingView Lightweight Charts): синяя линия — вход, красная пунктир — Stop Loss, зелёная — Take Profit. Ниже — полный TradingView для рисования."
-      : "Свечи Bybit на верхнем графике. Уровни Entry / SL / TP появятся после «Один цикл» или при открытой позиции.";
+  if (legend && levels.length) {
+    legend.textContent =
+      "Уровни Entry / SL / TP — в карточках над графиком. На TradingView нарисуй горизонтальные линии вручную или пришли Charting Library для автолиний бота.";
   }
 }
 
 async function fetchChartData(symbol, timeframe) {
-  let chartData = await api(
+  return api(
     `/api/v1/dashboard/chart?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`
   );
-  if (!chartData.candles?.length && !candlesAutoFetched) {
-    candlesAutoFetched = true;
-    try {
-      await api("/api/v1/dashboard/refresh-market", { method: "POST" });
-      chartData = await api(
-        `/api/v1/dashboard/chart?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`
-      );
-    } catch (e) {
-      console.warn("auto candle fetch failed", e);
-    }
-  }
-  return chartData;
 }
 
 function $(id) {
@@ -407,6 +319,72 @@ function renderSignal(signal) {
   }
   el.innerHTML = `<strong>${signal.action}</strong> · ${(signal.confidence * 100).toFixed(0)}%<br/>
     <span class="hint">${escapeHtml(signal.reason || "")}</span>`;
+}
+
+function renderTraderBriefing(briefing, overview) {
+  const el = $("traderBriefing");
+  if (!el) return;
+
+  const b =
+    briefing ||
+    (overview.last_cycle_decisions || []).find(
+      (d) => d.symbol === ($("symbolSelect")?.value || "BTCUSDT")
+    )?.trader_briefing;
+
+  if (!b) {
+    el.innerHTML =
+      '<p class="hint">Нажми «Один цикл» или «Старт бота» — бот загрузит свечи Bybit, изучит таймфреймы и опишет план.</p>';
+    return;
+  }
+
+  const conf = b.confluence || {};
+  const trade = b.trade || {};
+  const biasClass = { bullish: "bias-up", bearish: "bias-down", neutral: "bias-flat" };
+
+  const tfRows = (b.timeframes || [])
+    .map((row) => {
+      const cls = biasClass[row.bias] || "bias-flat";
+      const biasLabel =
+        { bullish: "Бычий", bearish: "Медвежий", neutral: "Нейтральный" }[row.bias] || row.bias;
+      return `<tr class="${cls}">
+        <td>${escapeHtml(row.label)}</td>
+        <td>${biasLabel}</td>
+        <td>${escapeHtml(row.reason || "")}</td>
+        <td class="num">${fmt(row.close)}</td>
+      </tr>`;
+    })
+    .join("");
+
+  let planHtml = "";
+  if (trade.action && trade.action !== "HOLD") {
+    planHtml = `
+      <div class="brief-plan">
+        <h4>План: ${escapeHtml(trade.action)} · уверенность ${trade.confidence_pct ?? "—"}%</h4>
+        <dl class="brief-dl">
+          <dt>Вход</dt><dd>${fmt(trade.entry)}</dd>
+          <dt>Stop Loss</dt><dd>${fmt(trade.stop_loss)} <span class="hint">(${trade.risk_pct_signed ?? trade.risk_pct ?? "—"}%)</span></dd>
+          <dt>Take Profit</dt><dd>${fmt(trade.take_profit)} <span class="hint">(+${trade.reward_pct_signed ?? trade.reward_pct ?? "—"}%)</span></dd>
+          ${trade.risk_reward ? `<dt>R:R</dt><dd>${Number(trade.risk_reward).toFixed(2)}</dd>` : ""}
+        </dl>
+      </div>`;
+  } else {
+    planHtml = '<p class="brief-hold">Сейчас без входа — бот ждёт согласованности по таймфреймам или лучшей точки.</p>';
+  }
+
+  el.innerHTML = `
+    <p class="brief-headline">${escapeHtml(b.headline || "")}</p>
+    <p class="hint">${escapeHtml(b.mtf_summary || "")}</p>
+    <div class="brief-confluence">
+      <span>Консенсус ТФ: бычьи <strong>${conf.bullish_weight ?? "—"}</strong> · медвежьи <strong>${conf.bearish_weight ?? "—"}</strong> · edge <strong>${conf.edge ?? "—"}</strong></span>
+      <span class="badge-muted">режим: ${escapeHtml(b.regime || "—")}</span>
+    </div>
+    ${planHtml}
+    <table class="brief-tf-table">
+      <thead><tr><th>ТФ</th><th>Уклон</th><th>Почему</th><th>Цена</th></tr></thead>
+      <tbody>${tfRows || "<tr><td colspan='4'>Нет данных — загрузи свечи</td></tr>"}</tbody>
+    </table>
+    <p class="hint brief-foot">${escapeHtml(b.data_note || "")}</p>
+  `;
 }
 
 function renderDecisionExplanation(overview, chartData) {
@@ -613,6 +591,100 @@ function populateTimeframes(timeframes, labels) {
   });
 }
 
+async function loadRatioSection() {
+  const holdingsEl = $("ratioHoldings");
+  const pairsEl = $("ratioPairsTable");
+  const proposalsEl = $("ratioProposals");
+  if (!holdingsEl || !pairsEl || !proposalsEl) return;
+
+  let holdings = {};
+  let pairs = [];
+  let pending = [];
+  try {
+    const [h, p, pr] = await Promise.all([
+      api("/api/v1/ratio-swaps/holdings"),
+      api("/api/v1/ratio-swaps/pairs"),
+      api("/api/v1/ratio-swaps/proposals?status=pending"),
+    ]);
+    holdings = h?.holdings || {};
+    pairs = p?.pairs || [];
+    pending = pr?.proposals || [];
+  } catch (e) {
+    console.warn("ratio load failed", e);
+    return;
+  }
+
+  const holdingsData = holdings;
+  const entries = Object.entries(holdingsData);
+  holdingsEl.innerHTML = entries.length
+    ? `<p class="hint">Paper-портфель для ротации:</p><div class="holdings-chips">${entries
+        .map(
+          ([a, q]) =>
+            `<span class="hold-chip"><strong>${escapeHtml(a)}</strong> ${Number(q).toFixed(6)}</span>`
+        )
+        .join("")}</div>`
+    : "<p class='hint'>Нет holdings — нажми «Сканировать соотношения»</p>";
+
+  if (!pairs.length) {
+    pairsEl.innerHTML = "<p class='hint'>Загрузи свечи (D) и запусти сканирование</p>";
+  } else {
+    pairsEl.innerHTML = `<table class="ratio-table"><thead><tr>
+      <th>Пара</th><th>Сейчас</th><th>Мин</th><th>Сред</th><th>Макс</th><th>%</th>
+    </tr></thead><tbody>${pairs
+      .map(
+        (p) => `<tr>
+        <td>${escapeHtml(p.pair_label)}</td>
+        <td>${Number(p.ratio_current).toFixed(2)}</td>
+        <td>${Number(p.ratio_min).toFixed(2)}</td>
+        <td>${Number(p.ratio_mean).toFixed(2)}</td>
+        <td>${Number(p.ratio_max).toFixed(2)}</td>
+        <td>${Number(p.ratio_percentile).toFixed(0)}%</td>
+      </tr>`
+      )
+      .join("")}</tbody></table>`;
+  }
+
+  proposalsEl.innerHTML = "";
+  if (!pending.length) {
+    proposalsEl.innerHTML = "<li class='hint'>Нет ожидающих обменов</li>";
+    return;
+  }
+
+  pending.forEach((p) => {
+    const li = document.createElement("li");
+    li.className = "ratio-proposal-item";
+    li.innerHTML = `
+      <div class="journal-head">
+        <strong>${escapeHtml(p.from_asset)} → ${escapeHtml(p.to_asset)}</strong>
+        <span class="meta">${escapeHtml(p.pair_label)} · ${Number(p.ratio_current).toFixed(2)} · ${Number(p.ratio_percentile || 0).toFixed(0)}%</span>
+      </div>
+      <p>${escapeHtml(p.from_qty?.toFixed?.(6) ?? p.from_qty)} → ${escapeHtml(p.to_qty?.toFixed?.(6) ?? p.to_qty)}</p>
+      <details><summary>Объяснение</summary><pre class="journal-detail">${escapeHtml(p.explanation || "")}</pre></details>
+      <div class="proposal-actions">
+        <button type="button" class="btn primary btn-sm" data-approve="${p.id}">✓ Подтвердить</button>
+        <button type="button" class="btn danger btn-sm" data-reject="${p.id}">✗ Отклонить</button>
+      </div>`;
+  proposalsEl.appendChild(li);
+  });
+
+  proposalsEl.querySelectorAll("[data-approve]").forEach((btn) => {
+    btn.addEventListener("click", () =>
+      withButton(btn, async () => {
+        await api(`/api/v1/ratio-swaps/proposals/${btn.dataset.approve}/approve`, { method: "POST" });
+        await refreshAll();
+      })
+    );
+  });
+  proposalsEl.querySelectorAll("[data-reject]").forEach((btn) => {
+    btn.addEventListener("click", () =>
+      withButton(btn, async () => {
+        await api(`/api/v1/ratio-swaps/proposals/${btn.dataset.reject}/reject`, { method: "POST" });
+        await refreshAll();
+      })
+    );
+  });
+}
+
 function populateSymbols(symbols) {
   const select = $("symbolSelect");
   if (!select) return;
@@ -625,14 +697,13 @@ function populateSymbols(symbols) {
   });
 }
 
-let lastTvSymbol = "";
-let lastTvInterval = "";
-
 async function loadOverview() {
   const symbol = $("symbolSelect")?.value || "BTCUSDT";
   const timeframe = $("timeframeSelect")?.value || "5";
   const [overview, chartData] = await Promise.all([
-    api(`/api/v1/dashboard/overview?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`),
+    api(
+      `/api/v1/dashboard/overview?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&include_ratios=false`
+    ),
     fetchChartData(symbol, timeframe),
   ]);
 
@@ -641,6 +712,7 @@ async function loadOverview() {
   renderMultiTf(overview.indicators_all_timeframes, overview.bot?.timeframe_labels);
   renderTradePlan(chartData?.trade_plan, overview.signal);
   renderSignal(overview.signal);
+  renderTraderBriefing(overview.trader_briefing, overview);
   renderDecisionExplanation(overview, chartData);
   renderDecisionJournal(overview.decision_journal, overview.last_cycle_decisions);
   renderRisk(overview.risk_events, overview.bot);
@@ -649,14 +721,7 @@ async function loadOverview() {
   renderChanges(overview.market_changes);
 
   updateChartChrome(chartData, symbol, timeframe);
-  renderLevelsChart(chartData, symbol, timeframe);
-
-  const tvKey = `${symbol}:${timeframe}`;
-  if (tvKey !== `${lastTvSymbol}:${lastTvInterval}`) {
-    lastTvSymbol = symbol;
-    lastTvInterval = timeframe;
-    loadTradingViewChart(symbol, timeframe, chartData);
-  }
+  renderMainChart(chartData, symbol, timeframe);
 }
 
 async function refreshAll() {
@@ -686,49 +751,93 @@ function bindControls() {
   const btnStop = $("btnStop");
   const btnOnce = $("btnOnce");
   const btnRefreshMarket = $("btnRefreshMarket");
+  const btnRatioScan = $("btnRatioScan");
+  const btnRefreshMarketFull = $("btnRefreshMarketFull");
+
   if (btnStart) {
     btnStart.addEventListener("click", () =>
       withButton(btnStart, async () => {
         await api("/api/v1/bot/start", { method: "POST" });
+        setStatusHint("Бот запущен в фоне");
         await refreshAll();
-      })
+      }, "Запуск…")
     );
   }
   if (btnStop) {
     btnStop.addEventListener("click", () =>
       withButton(btnStop, async () => {
         await api("/api/v1/bot/stop", { method: "POST" });
+        setStatusHint("Бот остановлен");
         await refreshAll();
-      })
+      }, "Стоп…")
     );
   }
   if (btnOnce) {
     btnOnce.addEventListener("click", () =>
-      withButton(btnOnce, async () => {
-        await api("/api/v1/bot/run-once", { method: "POST" });
-        await refreshAll();
-      })
+      withButton(
+        btnOnce,
+        async () => {
+          await api("/api/v1/bot/run-once", { method: "POST" });
+          setStatusHint("Цикл завершён");
+          await refreshAll();
+        },
+        "Цикл… (30–90 сек)"
+      )
     );
   }
   if (btnRefreshMarket) {
     btnRefreshMarket.addEventListener("click", () =>
-      withButton(btnRefreshMarket, async () => {
-        const r = await api("/api/v1/dashboard/refresh-market", { method: "POST" });
-        alert(`Свечи загружены для ТФ: ${(r?.timeframes || []).join(", ")}`);
-        await refreshAll();
-      })
+      withButton(
+        btnRefreshMarket,
+        async () => {
+          const sym = $("symbolSelect")?.value || "BTCUSDT";
+          const tf = $("timeframeSelect")?.value || "5";
+          await api(
+            `/api/v1/dashboard/refresh-market?symbol=${encodeURIComponent(sym)}&timeframe=${encodeURIComponent(tf)}`,
+            { method: "POST" }
+          );
+          setStatusHint(`Свечи обновлены: ${sym} ${tfLabel(tf)}`);
+          await refreshAll();
+        },
+        "Загрузка…"
+      )
+    );
+  }
+  if (btnRefreshMarketFull) {
+    btnRefreshMarketFull.addEventListener("click", () =>
+      withButton(
+        btnRefreshMarketFull,
+        async () => {
+          if (!confirm("Загрузить ВСЕ монеты и таймфреймы? Это может занять несколько минут.")) {
+            return;
+          }
+          await api("/api/v1/dashboard/refresh-market?full=true", { method: "POST" });
+          setStatusHint("Полная загрузка завершена");
+          await refreshAll();
+        },
+        "Все ТФ…"
+      )
+    );
+  }
+  if (btnRatioScan) {
+    btnRatioScan.addEventListener("click", () =>
+      withButton(
+        btnRatioScan,
+        async () => {
+          const r = await api("/api/v1/ratio-swaps/scan", { method: "POST" });
+          alert(`Новых предложений: ${r?.created ?? 0}`);
+          await loadRatioSection();
+        },
+        "Скан…"
+      )
     );
   }
   $("symbolSelect")?.addEventListener("change", () => {
-    lastTvSymbol = "";
-    lastTvInterval = "";
-    lastLevelsKey = "";
+    lastChartKey = "";
     refreshAll();
   });
   $("timeframeSelect")?.addEventListener("change", () => {
-    lastTvSymbol = "";
-    lastTvInterval = "";
-    lastLevelsKey = "";
+    lastChartKey = "";
     refreshAll();
   });
 }
@@ -762,9 +871,12 @@ async function init() {
   populateTimeframes(tfs, labels);
 
   await refreshAll();
+  loadRatioSection();
 
   if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(refreshAll, 15000);
+  refreshTimer = setInterval(refreshAll, 20000);
+  if (ratioTimer) clearInterval(ratioTimer);
+  ratioTimer = setInterval(loadRatioSection, 120000);
 }
 
 if (document.readyState === "loading") {

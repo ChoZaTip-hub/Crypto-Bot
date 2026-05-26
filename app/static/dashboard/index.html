@@ -12,7 +12,7 @@
       <span class="logo">◇</span>
       <div>
         <h1>Crypto Trading Bot</h1>
-        <p class="subtitle">TradingView · уровни входа, Stop Loss, Take Profit</p>
+        <p class="subtitle">TradingView · Bybit · Entry / SL / TP в панели</p>
       </div>
     </div>
     <div class="topbar-actions">
@@ -36,7 +36,9 @@
       <button id="btnStart" class="btn primary">▶ Старт бота</button>
       <button id="btnStop" class="btn danger">■ Стоп</button>
       <button id="btnOnce" class="btn">↻ Один цикл</button>
-      <button id="btnRefreshMarket" class="btn ghost">Загрузить свечи Bybit</button>
+      <button id="btnRefreshMarket" class="btn ghost">Загрузить свечи</button>
+      <button id="btnRefreshMarketFull" class="btn ghost" title="Все монеты и ТФ — долго">Все ТФ</button>
+      <button id="btnRatioScan" class="btn ghost">Сканировать соотношения</button>
     </div>
     <p id="apiError" class="api-error" hidden></p>
     <p id="lastRun" class="hint"></p>
@@ -47,10 +49,10 @@
     <section class="card chart-card">
       <div class="chart-header-row">
         <div>
-          <h2>График TradingView</h2>
+          <h2>График</h2>
           <p id="chartStatus" class="hint">Загрузка…</p>
         </div>
-        <a id="tvOpenLink" class="btn ghost btn-sm" href="#" target="_blank" rel="noopener">Открыть в TradingView ↗</a>
+        <a id="tvOpenLink" class="btn ghost btn-sm" href="#" target="_blank" rel="noopener">TradingView ↗</a>
       </div>
 
       <div id="tradeLevelsPanel" class="trade-levels-panel">
@@ -60,37 +62,39 @@
         <div class="level-card price"><span class="lbl">Текущая цена</span><span id="lvlPrice" class="val">—</span></div>
       </div>
 
-      <div class="chart-stack">
-        <section class="levels-chart-section">
-          <div class="chart-subheader">
-            <h3>Свечи Bybit + уровни сделки</h3>
-            <p id="levelsChartStatus" class="hint">Загрузка…</p>
-          </div>
-          <div id="levelsChartContainer" class="levels-chart-container"></div>
-        </section>
-
-        <section class="tv-section">
-          <div class="chart-subheader">
-            <h3>TradingView — полный график и рисование</h3>
-            <p class="hint">Линии, фигуры и индикаторы — на панели слева в виджете</p>
-          </div>
-          <div class="tv-chart-host">
-            <div id="tvChartContainer" class="tradingview-widget-container"></div>
-          </div>
-        </section>
-      </div>
-
-      <p id="chartLegend" class="chart-legend"></p>
+      <div id="mainChartContainer" class="main-chart-container tv-chart-host"></div>
+      <p id="levelsChartStatus" class="hint chart-footnote"></p>
+      <p id="chartLegend" class="chart-legend">Entry / SL / TP — в цветных карточках над графиком. На графике TradingView — полный терминал (линии, индикаторы, масштаб).</p>
 
       <div id="indicatorRow" class="indicator-row"></div>
-      <h3 class="subheading">Все таймфреймы</h3>
+      <h3 class="subheading">Ключевые таймфреймы</h3>
       <div id="multiTfPanel" class="multi-tf-panel"></div>
+
+      <h3 class="subheading trader-report-heading">Отчёт трейдера (бот изучил график)</h3>
+      <p class="hint trader-report-hint">
+        Свечи и индикаторы — Bybit через бота. График выше — TradingView для просмотра.
+        Сделки открывает/закрывает бот сам (paper или live), без лицензии Charting Library.
+      </p>
+      <div id="traderBriefing" class="trader-briefing"></div>
+      <details class="explanation-details">
+        <summary>Полный технический разбор</summary>
+        <pre id="decisionExplanation" class="decision-explanation"></pre>
+      </details>
     </section>
 
-    <section class="card wide">
-      <h2>Почему бот так решил</h2>
-      <pre id="decisionExplanation" class="decision-explanation">Запусти «Один цикл» — здесь появится объяснение входа, выхода и режима рынка.</pre>
+    <section class="card wide ratio-card">
+      <div class="chart-header-row">
+        <div>
+          <h2>Соотношения монет (BTC/ETH и др.)</h2>
+          <p class="hint">Бот предлагает обмен при экстремумах. Ты подтверждаешь или отклоняешь.</p>
+        </div>
+      </div>
+      <div id="ratioHoldings" class="ratio-holdings"></div>
+      <div id="ratioPairsTable" class="ratio-pairs-table"></div>
+      <h3 class="subheading">Предложения обмена</h3>
+      <ul id="ratioProposals" class="ratio-proposals"></ul>
     </section>
+
     <section class="card wide">
       <h2>Журнал решений</h2>
       <ul id="decisionJournal" class="decision-journal"></ul>
@@ -126,7 +130,6 @@
   </main>
 
   <footer class="footer">API: <a href="/docs" target="_blank">/docs</a></footer>
-  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-  <script src="/assets/app.js?v=8"></script>
+  <script src="/assets/app.js?v=13"></script>
 </body>
 </html>

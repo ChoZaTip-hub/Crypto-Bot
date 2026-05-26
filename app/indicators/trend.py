@@ -33,4 +33,4 @@ class ADXIndicator(BaseIndicator):
         plus_di = 100 * mean(plus_dm) / atr
         minus_di = 100 * mean(minus_dm) / atr
         denom = plus_di + minus_di
-        return 100 * abs(plus_di - minus_di) / safe_div(denom, 1.0, 1e-10)
+        return safe_div(100 * abs(plus_di - minus_di), denom, 0.0)

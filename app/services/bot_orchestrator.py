@@ -58,7 +58,7 @@ class BotOrchestrator:
     async def run_pipeline(self) -> dict[str, Any]:
         """Full cycle: market → indicators → signal + explanation → risk → execution."""
         await self._ensure_paper()
-        market_counts = await self._market.ingest_all()
+        market_counts = await self._market.ingest_cycle()
         portfolio = await self._portfolio.snapshot()
         results: list[dict[str, Any]] = []
 
@@ -86,6 +86,7 @@ class BotOrchestrator:
                     },
                 )
 
+            briefing = (inputs.memory_context or {}).get("trader_briefing")
             results.append(
                 {
                     "symbol": symbol,
@@ -93,6 +94,7 @@ class BotOrchestrator:
                     "confidence": signal.confidence,
                     "reason": signal.reason,
                     "explanation": signal.explanation,
+                    "trader_briefing": briefing,
                     "regime": inputs.regime,
                     "entry_price": signal.entry_price,
                     "stop_loss": signal.stop_loss,

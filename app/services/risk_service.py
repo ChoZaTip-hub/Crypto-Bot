@@ -37,6 +37,7 @@ class RiskService:
         primary_timeframe: str = "5",
     ) -> RiskAssessment:
         positions = await self._position_repo.get_open_positions()
+        open_for_symbol = next((p for p in positions if p.symbol == signal.symbol), None)
         symbol_exposure = 0.0
         if equity > 0:
             for p in positions:
@@ -57,6 +58,18 @@ class RiskService:
             symbol_exposure_pct=symbol_exposure,
         )
         assessment = self._manager.assess(signal, market, portfolio)
+
+        if signal.action.value == "BUY" and open_for_symbol:
+            assessment.allowed = False
+            assessment.blocks.append("position_already_open")
+        elif signal.action.value == "SELL":
+            if open_for_symbol:
+                assessment.suggested_qty = open_for_symbol.qty
+                assessment.allowed = True
+                assessment.blocks = [b for b in assessment.blocks if b != "max_open_positions"]
+            else:
+                assessment.allowed = False
+                assessment.blocks.append("no_position_to_close")
 
         if not assessment.allowed and signal.action.value != "HOLD":
             await self._risk_repo.save_event(

@@ -7,6 +7,7 @@ from app.db.repositories.candle_repo import CandleRepository
 from app.exchanges.base import ExchangeBase
 from app.exchanges.exchange_types import CandleData
 from app.services.audit_service import AuditService
+from app.utils.candles import sanitize_ohlc_rows
 from app.utils.time import utc_now_ts
 
 logger = get_logger(__name__)
@@ -30,7 +31,10 @@ class MarketDataService:
         candles = await self._exchange.fetch_klines(symbol, timeframe, limit=200)
         if not candles:
             return 0
-        await self._candle_repo.bulk_upsert([c.to_dict() for c in candles])
+        rows = sanitize_ohlc_rows([c.to_dict() for c in candles])
+        if not rows:
+            return 0
+        await self._candle_repo.bulk_upsert(rows)
         latest = candles[-1]
         self._last_ts[f"{symbol}:{timeframe}"] = latest.open_time
         await self._audit.log(
@@ -41,11 +45,34 @@ class MarketDataService:
         return len(candles)
 
     async def ingest_all(self) -> dict[str, int]:
+        return await self._ingest_pairs(
+            self._settings.symbol_whitelist,
+            self._settings.timeframes,
+        )
+
+    async def ingest_cycle(self) -> dict[str, int]:
+        """Light ingest for bot loop (fewer API calls)."""
+        return await self._ingest_pairs(
+            self._settings.symbol_whitelist,
+            self._settings.bot_cycle_timeframes,
+        )
+
+    async def ingest_symbol_tf(self, symbol: str, timeframe: str) -> dict[str, int]:
+        key = f"{symbol}:{timeframe}"
+        count = await self.ingest_symbol_timeframe(symbol, timeframe)
+        return {key: count}
+
+    async def _ingest_pairs(self, symbols: list[str], timeframes: list[str]) -> dict[str, int]:
+        """Sequential ingest — one shared DB session cannot run parallel writes."""
         results: dict[str, int] = {}
-        for symbol in self._settings.symbol_whitelist:
-            for tf in self._settings.timeframes:
+        for symbol in symbols:
+            for tf in timeframes:
                 key = f"{symbol}:{tf}"
-                results[key] = await self.ingest_symbol_timeframe(symbol, tf)
+                try:
+                    results[key] = await self.ingest_symbol_timeframe(symbol, tf)
+                except Exception as exc:
+                    logger.warning("ingest_failed", key=key, error=str(exc))
+                    results[key] = 0
         return results
 
     async def on_candle(self, candle: CandleData) -> None:

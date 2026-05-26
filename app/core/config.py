@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     timeframes: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: list(DEFAULT_TIMEFRAMES)
     )
+    # Fewer TFs per bot cycle = faster «Один цикл» / «Старт»
+    bot_cycle_timeframes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["5", "15", "60", "240"]
+    )
+    min_signal_confidence: float = 0.52
+    min_mtf_edge: float = 1.0
+    # TFs shown on dashboard multi-TF panel (not all 9 on every refresh)
+    dashboard_indicator_timeframes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["5", "60", "240", "D"]
+    )
 
     max_risk_per_trade: float = 0.01
     max_daily_loss: float = 0.03
@@ -98,6 +108,15 @@ class Settings(BaseSettings):
     live_place_exchange_sl_tp: bool = True
     live_close_sl_tp_on_exchange: bool = True
 
+    # Cross-asset ratio rotation (BTC/ETH etc.) — proposals require user approval
+    ratio_swap_enabled: bool = True
+    ratio_monitor_interval_seconds: int = 300
+    ratio_high_percentile: float = 0.85
+    ratio_low_percentile: float = 0.15
+    ratio_min_snapshots: int = 20
+    ratio_swap_fraction: float = 1.0
+    ratio_proposal_ttl_hours: int = 24
+
     @model_validator(mode="before")
     @classmethod
     def parse_comma_separated_lists(cls, data: Any) -> Any:
@@ -107,6 +126,8 @@ class Settings(BaseSettings):
         for key, parser in (
             ("symbol_whitelist", _parse_symbol_whitelist),
             ("timeframes", _parse_csv_list),
+            ("bot_cycle_timeframes", _parse_csv_list),
+            ("dashboard_indicator_timeframes", _parse_csv_list),
         ):
             if key in data:
                 data[key] = parser(data[key])

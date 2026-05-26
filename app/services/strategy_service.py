@@ -9,6 +9,7 @@ from app.db.repositories.strategy_decision_repo import StrategyDecisionRepositor
 from app.risk.manager import RiskAssessment
 from app.services.audit_service import AuditService
 from app.services.decision_explanation import build_entry_explanation, short_summary
+from app.services.market_analysis_service import MarketAnalysisService
 from app.services.indicator_service import IndicatorService
 from app.services.learning_service import LearningService
 from app.services.memory_service import MemoryService
@@ -33,6 +34,7 @@ class StrategyService:
         self._settings = settings
         self._memory = MemoryService(session, audit) if settings and settings.memory_enabled else None
         self._learning = LearningService(session, audit) if settings and settings.learning_enabled else None
+        self._analysis = MarketAnalysisService()
 
     async def analyze_symbol(
         self, symbol: str
@@ -57,6 +59,8 @@ class StrategyService:
             inputs.learning_weights = learning_weights
 
         bundle = await self._strategy.decide_detailed(inputs)
+        briefing = self._analysis.build_briefing(inputs, bundle.signal)
+        inputs.memory_context = {**(inputs.memory_context or {}), "trader_briefing": briefing}
         return inputs, bundle, learning_weights
 
     async def finalize_and_persist(
@@ -67,6 +71,10 @@ class StrategyService:
     ) -> StrategySignal:
         """Attach explanation, save signal/decision/audit."""
         signal = bundle.signal
+        briefing = (inputs.memory_context or {}).get("trader_briefing")
+        if not briefing:
+            briefing = self._analysis.build_briefing(inputs, signal)
+        briefing_text = self._analysis.format_briefing_text(briefing)
         full_explanation = build_entry_explanation(
             inputs,
             signal,
@@ -74,7 +82,7 @@ class StrategyService:
             active_strategies=bundle.active_strategies,
             risk=risk,
         )
-        signal.explanation = full_explanation
+        signal.explanation = f"{briefing_text}\n\n{'─' * 40}\n\n{full_explanation}"
         signal.reason = short_summary(full_explanation)
 
         signal_id = None

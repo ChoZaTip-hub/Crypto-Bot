@@ -7,6 +7,7 @@ from app.core.constants import SignalAction
 from app.strategies.base import BaseStrategy, StrategyInputs, StrategySignal
 from app.strategies.mean_reversion_strategy import MeanReversionStrategy
 from app.strategies.signal_combiner import SignalCombiner
+from app.services.market_analysis_service import _bias_for_tf, _tf_weight
 from app.strategies.trend_strategy import TrendStrategy
 
 
@@ -69,6 +70,7 @@ class MultiTimeframeStrategy(BaseStrategy):
         combined.correlation_id = correlation_id
         combined.timeframe_confirmations = list(inputs.timeframes.keys())
         combined.strategy_name = self.name
+        combined = self._apply_mtf_confluence(combined, inputs)
 
         recent_changes = inputs.memory_context.get("recent_changes") or []
         if recent_changes:
@@ -79,6 +81,44 @@ class MultiTimeframeStrategy(BaseStrategy):
             sub_signals=sub_signals,
             active_strategies=active,
         )
+
+    def _apply_mtf_confluence(
+        self, signal: StrategySignal, inputs: StrategyInputs
+    ) -> StrategySignal:
+        """Downgrade trades that fight multi-TF bias or lack confidence."""
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        min_conf = settings.min_signal_confidence
+        min_edge = settings.min_mtf_edge
+
+        if signal.action == SignalAction.HOLD:
+            return signal
+
+        bull_w = bear_w = 0.0
+        for tf, ind in inputs.timeframes.items():
+            bias, _ = _bias_for_tf(ind)
+            w = _tf_weight(tf)
+            if bias == "bullish":
+                bull_w += w
+            elif bias == "bearish":
+                bear_w += w
+        edge = bull_w - bear_w
+
+        if signal.confidence < min_conf:
+            signal.action = SignalAction.HOLD
+            signal.reason = (
+                f"низкая уверенность {signal.confidence * 100:.0f}% < {min_conf * 100:.0f}%"
+            )
+            return signal
+
+        if signal.action == SignalAction.BUY and edge < min_edge:
+            signal.action = SignalAction.HOLD
+            signal.reason = f"BUY отклонён: ТФ не поддерживают (edge={edge:.1f} < {min_edge})"
+        elif signal.action == SignalAction.SELL and edge > -min_edge:
+            signal.action = SignalAction.HOLD
+            signal.reason = f"SELL отклонён: нет медвежьего консенсуса (edge={edge:.1f})"
+        return signal
 
     async def decide(self, inputs: StrategyInputs) -> StrategySignal:
         bundle = await self.decide_detailed(inputs)

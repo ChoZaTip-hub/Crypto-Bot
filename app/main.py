@@ -13,12 +13,14 @@ from app.api.router import router
 from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
 from app.db.init_db import DatabaseInitializer
+from app.db.sqlite_schema import patch_sqlite_schema
 from app.db.session import DatabaseSessionManager
 from app.services.background_manager import BackgroundManager
 from app.services.bot_manager import BotManager
 
 STATIC_DIR = Path(__file__).resolve().parent / "static" / "dashboard"
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+CHARTING_LIB_DIR = Path(__file__).resolve().parent.parent / "charting_library"
 logger = get_logger(__name__)
 
 
@@ -31,6 +33,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     db_manager.init_engine()
     try:
         await DatabaseInitializer(db_manager.engine).create_all()
+        await patch_sqlite_schema(db_manager.engine)
     except OSError as exc:
         logger.error("database_connection_failed", url=settings.database_url, error=str(exc))
         raise RuntimeError(
@@ -77,6 +80,14 @@ def create_app() -> FastAPI:
         @app.get("/")
         async def dashboard_page() -> FileResponse:
             return FileResponse(STATIC_DIR / "index.html")
+
+    if CHARTING_LIB_DIR.is_dir():
+        app.mount(
+            "/charting_library",
+            StaticFiles(directory=CHARTING_LIB_DIR),
+            name="tv-charting-library",
+        )
+        logger.info("tradingview_charting_library_mounted", path=str(CHARTING_LIB_DIR))
 
     return app
 

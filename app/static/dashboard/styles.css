@@ -181,49 +181,111 @@ select {
 .level-card.tp .val { color: #4ade80; }
 .level-card.price .val { color: var(--text); }
 
-.chart-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+.main-chart-container.tv-chart-host {
+  min-height: 520px;
+  height: 520px;
 }
-.chart-subheader {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.5rem;
+
+.tv-embed.tradingview-widget-container {
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
 }
-.chart-subheader h3 {
-  font-size: 0.85rem;
-  font-weight: 600;
+
+.tv-embed .tradingview-widget-container__widget {
+  height: 100% !important;
 }
-.levels-chart-container {
-  height: 360px;
+
+.main-chart-container {
+  height: 480px;
   width: 100%;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--border);
   background: #0f0f0f;
 }
-.levels-chart-container .chart-empty {
+.main-chart-container .chart-empty {
   padding: 1.5rem;
   text-align: center;
 }
-.tv-chart-host {
-  position: relative;
-  height: 420px;
-  width: 100%;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  background: #0f0f0f;
+.chart-footnote {
+  margin-top: 0.35rem;
 }
 
 .chart-legend {
   font-size: 0.8rem;
   color: var(--muted);
   margin-top: 0.5rem;
+}
+
+.trader-report-heading { margin-top: 1.25rem; }
+.trader-report-hint { margin-bottom: 0.75rem; }
+
+.trader-briefing {
+  background: #0d1219;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 0.75rem;
+}
+.brief-headline {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: #e2e8f0;
+}
+.brief-confluence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 0.65rem 0 1rem;
+  font-size: 0.85rem;
+}
+.badge-muted {
+  padding: 0.15rem 0.5rem;
+  border-radius: 6px;
+  background: #1f2937;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.brief-plan {
+  background: #141b24;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+.brief-plan h4 { font-size: 0.9rem; margin-bottom: 0.5rem; }
+.brief-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 1rem;
+  font-size: 0.85rem;
+}
+.brief-dl dt { color: var(--muted); }
+.brief-hold { color: var(--amber); font-size: 0.9rem; margin-bottom: 1rem; }
+.brief-tf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-top: 0.5rem;
+}
+.brief-tf-table th,
+.brief-tf-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+}
+.brief-tf-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.brief-tf-table tr.bias-up td:nth-child(2) { color: var(--green); }
+.brief-tf-table tr.bias-down td:nth-child(2) { color: var(--red); }
+.brief-foot { margin-top: 0.75rem; font-size: 0.75rem; }
+.explanation-details { margin-top: 0.5rem; }
+.explanation-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
 }
 
 .decision-explanation {
@@ -277,6 +339,36 @@ select {
   overflow: auto;
   color: var(--text);
 }
+
+.ratio-holdings { margin-bottom: 0.75rem; }
+.holdings-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.35rem; }
+.hold-chip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+}
+.ratio-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-bottom: 0.75rem;
+}
+.ratio-table th, .ratio-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
+.ratio-table th { color: var(--muted); font-weight: 600; }
+.ratio-proposals { list-style: none; display: flex; flex-direction: column; gap: 0.65rem; }
+.ratio-proposal-item {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+}
+.proposal-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
 .tradingview-widget-container {
   height: 100%;
   width: 100%;
