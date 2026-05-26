@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     admin,
+    ai,
     backtests,
     bot,
     dashboard,
@@ -20,6 +21,7 @@ from app.api.v1 import (
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router)
+api_router.include_router(ai.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(bot.router)
 api_router.include_router(memory.router)

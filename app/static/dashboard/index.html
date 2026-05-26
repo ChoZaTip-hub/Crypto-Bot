@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Crypto Trading Bot — Панель управления</title>
-  <link rel="stylesheet" href="/assets/styles.css" />
+  <link rel="stylesheet" href="/assets/styles.css?v=20" />
 </head>
 <body>
   <header class="topbar">
@@ -24,9 +24,11 @@
   </header>
 
   <section class="controls card">
-    <div class="control-group">
-      <label>Символ</label>
-      <select id="symbolSelect"></select>
+    <div class="control-group symbol-picker">
+      <label>Монета (Bybit spot)</label>
+      <input type="search" id="symbolFilter" placeholder="Поиск: BTC, BNB, SOL…" autocomplete="off" />
+      <select id="symbolSelect" size="1"></select>
+      <p id="symbolCountHint" class="hint"></p>
     </div>
     <div class="control-group">
       <label>Таймфрейм</label>
@@ -35,14 +37,57 @@
     <div class="control-buttons">
       <button id="btnStart" class="btn primary">▶ Старт бота</button>
       <button id="btnStop" class="btn danger">■ Стоп</button>
-      <button id="btnOnce" class="btn">↻ Один цикл</button>
-      <button id="btnRefreshMarket" class="btn ghost">Загрузить свечи</button>
-      <button id="btnRefreshMarketFull" class="btn ghost" title="Все монеты и ТФ — долго">Все ТФ</button>
-      <button id="btnRatioScan" class="btn ghost">Сканировать соотношения</button>
+      <button id="btnSaveTrading" class="btn ghost" type="button">Сохранить настройки</button>
     </div>
+    <details class="controls-advanced">
+      <summary>Дополнительно (обычно не нужно)</summary>
+      <div class="control-buttons">
+        <button id="btnOnce" class="btn ghost" title="Один проход без фонового цикла">↻ Один цикл</button>
+        <button id="btnRefreshMarket" class="btn ghost" title="Принудительно подтянуть свечи Bybit">Обновить свечи</button>
+        <button id="btnRefreshMarketFull" class="btn ghost" title="Все монеты — долго">Все монеты</button>
+        <button id="btnRatioScan" class="btn ghost">Соотношения BTC/ETH</button>
+      </div>
+    </details>
+    <details class="help-panel" open>
+      <summary>Как это работает</summary>
+      <ul class="help-list">
+        <li><strong>График</strong> — TradingView только для просмотра. Бот <em>не видит картинку</em>, он считает свечи Bybit (те же цены).</li>
+        <li><strong>Смена таймфрейма</strong> — подгружает свечи и пересчитывает вход / SL / TP под выбранный ТФ.</li>
+        <li><strong>Старт бота</strong> — сам каждые несколько секунд: свечи → анализ → сделка (paper) или блокировка риском.</li>
+        <li><strong>Риск</strong> — защита: устаревшие данные, лимит позиций, уже открытая сделка. Не баг, а фильтр.</li>
+        <li><strong>ИИ</strong> — в <code>.env</code>: <code>AI_ENABLED</code> + ключ; панель «ИИ-анализ» справа. Подробно: <code>docs/AI_SETUP.md</code>.</li>
+      </ul>
+    </details>
     <p id="apiError" class="api-error" hidden></p>
     <p id="lastRun" class="hint"></p>
     <p id="backgroundStatus" class="hint"></p>
+    <div class="trading-params-row">
+      <div class="control-group">
+        <label>Сумма сделки (USDT)</label>
+        <input type="number" id="orderUsdt" min="10" step="10" value="100" />
+      </div>
+      <div class="control-group">
+        <label>Тип входа</label>
+        <select id="entryOrderType">
+          <option value="Market">Рынок — сразу</option>
+          <option value="Limit">Лимит — по цене Entry</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label>Размер позиции</label>
+        <select id="positionSizeMode">
+          <option value="fixed_usdt">Фикс. USDT</option>
+          <option value="risk_percent">% риска по SL</option>
+        </select>
+      </div>
+    </div>
+    <p class="hint trading-hint">
+      При «Старт» бот каждые несколько секунд: свечи → сигнал → риск → ордер (paper/live).
+      Выход: Stop Loss / Take Profit (монитор 24/7) или сигнал SELL.
+    </p>
+    <p class="hint bot-activity-label"><strong>Последний цикл бота:</strong></p>
+    <div id="botActivity" class="bot-activity" hidden></div>
+    <p id="priceContextBanner" class="price-context-banner" hidden></p>
   </section>
 
   <main class="grid">
@@ -56,30 +101,63 @@
       </div>
 
       <div id="tradeLevelsPanel" class="trade-levels-panel">
-        <div class="level-card entry"><span class="lbl">Вход (Entry)</span><span id="lvlEntry" class="val">—</span></div>
+        <div class="level-card entry"><span class="lbl" id="lblEntry">Вход (Entry)</span><span id="lvlEntry" class="val">—</span></div>
         <div class="level-card stop"><span class="lbl">Stop Loss</span><span id="lvlStop" class="val">—</span></div>
         <div class="level-card tp"><span class="lbl">Take Profit</span><span id="lvlTp" class="val">—</span></div>
         <div class="level-card price"><span class="lbl">Текущая цена</span><span id="lvlPrice" class="val">—</span></div>
       </div>
 
-      <div id="mainChartContainer" class="main-chart-container tv-chart-host"></div>
-      <p id="levelsChartStatus" class="hint chart-footnote"></p>
-      <p id="chartLegend" class="chart-legend">Entry / SL / TP — в цветных карточках над графиком. На графике TradingView — полный терминал (линии, индикаторы, масштаб).</p>
-
-      <div id="indicatorRow" class="indicator-row"></div>
-      <h3 class="subheading">Ключевые таймфреймы</h3>
-      <div id="multiTfPanel" class="multi-tf-panel"></div>
-
-      <h3 class="subheading trader-report-heading">Отчёт трейдера (бот изучил график)</h3>
-      <p class="hint trader-report-hint">
-        Свечи и индикаторы — Bybit через бота. График выше — TradingView для просмотра.
-        Сделки открывает/закрывает бот сам (paper или live), без лицензии Charting Library.
-      </p>
-      <div id="traderBriefing" class="trader-briefing"></div>
-      <details class="explanation-details">
-        <summary>Полный технический разбор</summary>
-        <pre id="decisionExplanation" class="decision-explanation"></pre>
-      </details>
+      <div class="chart-layout">
+        <div class="chart-main">
+          <div id="mainChartContainer" class="main-chart-container tv-chart-host"></div>
+          <p id="levelsChartStatus" class="hint chart-footnote"></p>
+          <p id="chartLegend" class="chart-legend chart-legend--compact">Entry / SL / TP — карточки над графиком · TV — полный терминал</p>
+          <section class="trader-report-block">
+            <h3 class="subheading trader-report-heading">Отчёт трейдера (бот изучил график)</h3>
+            <p id="analysisNote" class="hint trader-report-hint"></p>
+            <div id="traderBriefing" class="trader-briefing"></div>
+            <details class="explanation-details">
+              <summary>Полный технический разбор</summary>
+              <pre id="decisionExplanation" class="decision-explanation"></pre>
+            </details>
+          </section>
+        </div>
+        <aside class="chart-sidebar">
+          <p class="sidebar-live-price">Bybit: <strong id="livePriceSidebar">—</strong></p>
+          <div class="chart-sidebar-panels">
+            <section class="sidebar-mini-card">
+              <h2>План сделки</h2>
+              <div id="tradePlan" class="trade-plan empty">Загрузка…</div>
+            </section>
+            <section class="sidebar-mini-card">
+              <h2>ИИ-анализ</h2>
+              <p class="hint">Свечи + индикаторы Bybit → LLM (нужен API ключ)</p>
+              <button type="button" id="btnAiAnalyze" class="btn ghost btn-sm">Запросить ИИ</button>
+              <div id="aiAnalysisPanel" class="ai-analysis-panel hint">ИИ выключен — см. .env AI_ENABLED</div>
+            </section>
+            <section class="sidebar-mini-card">
+              <h2>Где видит сделку (сейчас)</h2>
+              <p class="hint">По каждому ТФ — сразу, без ожидания цикла</p>
+              <div id="tfSetupsPanel" class="tf-setups-panel"></div>
+            </section>
+            <section class="sidebar-mini-card">
+              <h2>Защита (риск)</h2>
+              <p class="hint risk-sidebar-hint">Почему бот не вошёл в сделку</p>
+              <div id="riskBox"></div>
+            </section>
+            <section class="sidebar-mini-card">
+              <h2>Сигнал</h2>
+              <div id="signalBox" class="signal-box"></div>
+            </section>
+          </div>
+          <h3 class="subheading chart-sidebar-title">Ключевые таймфреймы</h3>
+          <div id="multiTfPanel" class="multi-tf-panel multi-tf-panel--stack"></div>
+          <section class="sidebar-mini-card sidebar-learning">
+            <h2>Обучение</h2>
+            <div id="learningBox" class="learning-box"></div>
+          </section>
+        </aside>
+      </div>
     </section>
 
     <section class="card wide ratio-card">
@@ -100,25 +178,6 @@
       <ul id="decisionJournal" class="decision-journal"></ul>
     </section>
 
-    <aside class="sidebar">
-      <section class="card">
-        <h2>План сделки</h2>
-        <div id="tradePlan" class="trade-plan empty">Нет сигнала — нажми «Один цикл»</div>
-      </section>
-      <section class="card">
-        <h2>Риск</h2>
-        <div id="riskBox"></div>
-      </section>
-      <section class="card">
-        <h2>Сигнал</h2>
-        <div id="signalBox" class="signal-box"></div>
-      </section>
-      <section class="card">
-        <h2>Обучение</h2>
-        <div id="learningBox" class="learning-box"></div>
-      </section>
-    </aside>
-
     <section class="card wide">
       <h2>Изменения (память)</h2>
       <ul id="changesList" class="audit-list"></ul>
@@ -130,6 +189,6 @@
   </main>
 
   <footer class="footer">API: <a href="/docs" target="_blank">/docs</a></footer>
-  <script src="/assets/app.js?v=13"></script>
+  <script src="/assets/app.js?v=27"></script>
 </body>
 </html>

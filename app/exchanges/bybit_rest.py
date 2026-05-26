@@ -1,4 +1,4 @@
-"""Bybit V5 REST client wrapper."""
+"""Bybit V5 REST client wrapper (mainnet only)."""
 
 import asyncio
 from typing import Any
@@ -21,7 +21,7 @@ class BybitRestClient:
     def _get_client(self) -> HTTP:
         if self._client is None:
             self._client = HTTP(
-                testnet=self._settings.bybit_testnet,
+                testnet=False,
                 api_key=self._settings.bybit_api_key or None,
                 api_secret=self._settings.bybit_api_secret or None,
             )
@@ -109,7 +109,7 @@ class BybitRestClient:
             raise ExchangeError(str(exc)) from exc
 
     async def get_last_price(self, symbol: str) -> float:
-        """Latest traded price for spot symbol."""
+        """Latest traded price on Bybit mainnet spot."""
         try:
             client = self._get_client()
             resp = await asyncio.to_thread(
@@ -143,27 +143,51 @@ class BybitRestClient:
 
     async def get_wallet_balance(self) -> dict[str, Any]:
         client = self._get_client()
-        return await asyncio.to_thread(client.get_wallet_balance, accountType="UNIFIED")
+        return client.get_wallet_balance(accountType="UNIFIED")
 
-    async def get_announcement(
-        self,
-        *,
-        locale: str = "en-US",
-        limit: int = 20,
-        type: str | None = None,
-        tag: str | None = None,
-        page: int | None = None,
-    ) -> dict[str, Any]:
-        """Fetch Bybit announcements via pybit (no API key required).
-
-        Docs: https://bybit-exchange.github.io/docs/v5/announcement
-        """
-        client = self._get_client()
-        params: dict[str, Any] = {"locale": locale, "limit": limit}
-        if type is not None:
-            params["type"] = type
-        if tag is not None:
-            params["tag"] = tag
-        if page is not None:
-            params["page"] = page
-        return await asyncio.to_thread(client.get_announcement, **params)
+    async def list_spot_usdt_symbols(self, *, limit: int = 120) -> list[str]:
+        """Tradable USDT spot symbols, preferring liquid names first."""
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(
+                client.get_instruments_info,
+                category=self._settings.bybit_category,
+            )
+            if resp.get("retCode") != 0:
+                raise ExchangeError(
+                    f"Instruments error: {resp.get('retMsg')}",
+                    details={"response": resp},
+                )
+            rows = resp.get("result", {}).get("list", [])
+            symbols: list[str] = []
+            for row in rows:
+                sym = str(row.get("symbol", "")).upper()
+                if not sym.endswith("USDT"):
+                    continue
+                if row.get("status") not in (None, "Trading", "trading"):
+                    continue
+                quote = str(row.get("quoteCoin", "USDT")).upper()
+                if quote != "USDT":
+                    continue
+                symbols.append(sym)
+            symbols = sorted(set(symbols))
+            # Keep majors at top for UX
+            majors = [
+                "BTCUSDT",
+                "ETHUSDT",
+                "BNBUSDT",
+                "SOLUSDT",
+                "XRPUSDT",
+                "DOGEUSDT",
+                "ADAUSDT",
+                "AVAXUSDT",
+                "LINKUSDT",
+                "TONUSDT",
+            ]
+            ordered = [s for s in majors if s in symbols]
+            ordered.extend(s for s in symbols if s not in ordered)
+            return ordered[:limit]
+        except ExchangeError:
+            raise
+        except Exception as exc:
+            raise ExchangeError(str(exc)) from exc

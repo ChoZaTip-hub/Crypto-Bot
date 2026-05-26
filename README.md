@@ -8,7 +8,7 @@ Production-oriented MVP for an AI-assisted crypto trading bot.
 
 - Python 3.12, FastAPI, asyncio, SQLAlchemy 2.0 async, Alembic, Pydantic v2
 - PostgreSQL, Redis
-- Bybit V5 (spot) via `pybit` — testnet/live switch
+- Bybit V5 spot (mainnet) via `pybit` — live market data and optional live orders
 - Chart-based strategy: multi-timeframe indicators, memory snapshots, adaptive learning from trade outcomes
 
 ## Architecture
@@ -71,13 +71,12 @@ curl http://localhost:8000/api/v1/health
 
 ### Live trading (real orders on Bybit)
 
-1. Create API keys on [Bybit](https://www.bybit.com) (or [testnet](https://testnet.bybit.com)) with **Spot Trade** only (no withdraw).
+1. Create API keys on [Bybit](https://www.bybit.com) with **Spot Trade** only (no withdraw).
 2. In `.env`:
 
 ```env
 TRADING_MODE=live
 LIVE_TRADING_ENABLED=true
-BYBIT_TESTNET=true          # false for mainnet
 BYBIT_API_KEY=...
 BYBIT_API_SECRET=...
 BOT_AUTO_START=true         # or POST /api/v1/bot/start
@@ -125,4 +124,4 @@ See `app/` for modular packages: `exchanges/`, `indicators/`, `strategies/`, `ri
 
 ## Disclaimer
 
-For educational and development purposes. Not financial advice. Always test on paper/testnet before any live capital.
+For educational and development purposes. Not financial advice. Always test in paper mode before any live capital.

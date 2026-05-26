@@ -12,6 +12,7 @@ class StrategyInputs:
     symbol: str
     timeframes: dict[str, dict[str, Any]]
     regime: str = "unknown"
+    live_price: float | None = None
     memory_context: dict[str, Any] = field(default_factory=dict)
     learning_weights: dict[str, float] = field(default_factory=dict)
 

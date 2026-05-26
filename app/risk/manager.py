@@ -36,6 +36,8 @@ class RiskAssessment:
     daily_loss_ok: bool = True
     data_fresh_ok: bool = True
     suggested_qty: float = 0.0
+    suggested_usdt: float = 0.0
+    atr_pct: float = 0.0
 
 
 class RiskManager:
@@ -85,6 +87,10 @@ class RiskManager:
                 blocks.append("position_size_zero")
                 allowed = False
 
+        suggested_usdt = 0.0
+        if suggested_qty > 0 and signal.entry_price:
+            suggested_usdt = suggested_qty * float(signal.entry_price)
+
         return RiskAssessment(
             allowed=allowed,
             blocks=blocks,
@@ -92,4 +98,6 @@ class RiskManager:
             daily_loss_ok=portfolio.daily_pnl_pct > -self._settings.max_daily_loss,
             data_fresh_ok=not market.data_stale,
             suggested_qty=suggested_qty,
+            suggested_usdt=suggested_usdt,
+            atr_pct=market.atr_pct,
         )

@@ -9,7 +9,7 @@ class TrendStrategy(BaseStrategy):
 
     async def decide(self, inputs: StrategyInputs) -> StrategySignal:
         tf_data = inputs.timeframes.get("60") or inputs.timeframes.get("5") or {}
-        close = tf_data.get("close", 0.0)
+        close = float(inputs.live_price or tf_data.get("close", 0.0))
         ema = tf_data.get("ema", close)
         adx = tf_data.get("adx", 0.0)
         atr = tf_data.get("atr", 0.0)

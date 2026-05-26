@@ -13,7 +13,6 @@ async def test_live_order_blocked_by_default() -> None:
     settings = Settings(
         trading_mode="paper",
         live_trading_enabled=False,
-        bybit_testnet=True,
     )
     client = BybitClient(settings)
     with pytest.raises(LiveTradingDisabledError):
@@ -23,6 +22,6 @@ async def test_live_order_blocked_by_default() -> None:
 
 
 def test_bybit_client_instantiation() -> None:
-    settings = Settings(bybit_testnet=True)
+    settings = Settings()
     client = BybitClient(settings)
     assert client is not None

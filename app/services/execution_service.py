@@ -57,14 +57,22 @@ class ExecutionService:
         client_order_id = f"{signal.correlation_id[:8]}-{order_id[:8]}"
         side = OrderSide.BUY if signal.action.value == "BUY" else OrderSide.SELL
 
+        order_type = self._settings.entry_order_type or "Market"
+        limit_price = (
+            float(signal.entry_price)
+            if order_type == "Limit" and signal.entry_price
+            else None
+        )
+
         order = await self._order_repo.create_order(
             {
                 "order_id": order_id,
                 "correlation_id": signal.correlation_id,
                 "symbol": signal.symbol,
                 "side": side.value,
+                "order_type": order_type,
                 "qty": risk.suggested_qty,
-                "price": signal.entry_price,
+                "price": limit_price,
                 "status": OrderStatus.PENDING.value,
                 "trading_mode": self._settings.trading_mode.value,
                 "client_order_id": client_order_id,
@@ -83,6 +91,8 @@ class ExecutionService:
                 symbol=signal.symbol,
                 side=side.value,
                 qty=risk.suggested_qty,
+                order_type=order_type,
+                price=limit_price,
                 client_order_id=client_order_id,
                 correlation_id=signal.correlation_id,
                 stop_loss=signal.stop_loss if attach_sl_tp else None,
@@ -155,12 +165,17 @@ class ExecutionService:
                 },
             )
 
+        filled_qty = result.filled_qty or risk.suggested_qty
         return {
             "order_id": order_id,
             "status": "filled",
             "exchange_order_id": result.exchange_order_id,
             "exchange_sl_tp": attach_sl_tp,
             "explanation": signal.explanation or signal.reason,
+            "order_type": order_type,
+            "qty": filled_qty,
+            "fill_price": fill_price,
+            "notional_usdt": filled_qty * fill_price if fill_price else None,
         }
 
     async def close_position_sl_tp(

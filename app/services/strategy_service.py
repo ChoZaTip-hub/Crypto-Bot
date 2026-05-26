@@ -9,6 +9,7 @@ from app.db.repositories.strategy_decision_repo import StrategyDecisionRepositor
 from app.risk.manager import RiskAssessment
 from app.services.audit_service import AuditService
 from app.services.decision_explanation import build_entry_explanation, short_summary
+from app.services.live_price_service import fetch_display_price, fetch_live_price
 from app.services.market_analysis_service import MarketAnalysisService
 from app.services.indicator_service import IndicatorService
 from app.services.learning_service import LearningService
@@ -47,8 +48,19 @@ class StrategyService:
                 tf_data[tf] = indicators
 
         learning_weights: dict = {}
-        inputs = StrategyInputs(symbol=symbol, timeframes=tf_data)
+        live_price: float | None = None
+        display: dict = {}
+        if self._settings:
+            display = await fetch_display_price(symbol, self._settings)
+            trading_lp, _ = await fetch_live_price(symbol, self._settings)
+            live_price = trading_lp if trading_lp > 0 else float(display.get("price") or 0) or None
+        inputs = StrategyInputs(symbol=symbol, timeframes=tf_data, live_price=live_price)
         inputs.regime = self._strategy._detect_regime(inputs)
+        if display:
+            inputs.memory_context = {
+                **inputs.memory_context,
+                "display_price": display.get("price"),
+            }
 
         if self._memory:
             await self._memory.capture_symbol(symbol, self._timeframes, regime=inputs.regime)
@@ -59,7 +71,10 @@ class StrategyService:
             inputs.learning_weights = learning_weights
 
         bundle = await self._strategy.decide_detailed(inputs)
-        briefing = self._analysis.build_briefing(inputs, bundle.signal)
+        display_px = (inputs.memory_context or {}).get("display_price") or inputs.live_price
+        briefing = self._analysis.build_briefing(
+            inputs, bundle.signal, live_price=display_px
+        )
         inputs.memory_context = {**(inputs.memory_context or {}), "trader_briefing": briefing}
         return inputs, bundle, learning_weights
 
@@ -73,7 +88,7 @@ class StrategyService:
         signal = bundle.signal
         briefing = (inputs.memory_context or {}).get("trader_briefing")
         if not briefing:
-            briefing = self._analysis.build_briefing(inputs, signal)
+            briefing = self._analysis.build_briefing(inputs, signal, live_price=inputs.live_price)
         briefing_text = self._analysis.format_briefing_text(briefing)
         full_explanation = build_entry_explanation(
             inputs,

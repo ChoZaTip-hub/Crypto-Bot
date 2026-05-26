@@ -45,7 +45,7 @@ class BotManager:
         if self._running:
             return
         self._running = True
-        self._task = asyncio.create_task(self._loop())
+        self._task = asyncio.create_task(self._loop(run_immediately=True))
         logger.info("bot_manager_started")
 
     async def stop(self) -> None:
@@ -63,7 +63,8 @@ class BotManager:
         result = await self._execute_cycle()
         return result
 
-    async def _loop(self) -> None:
+    async def _loop(self, *, run_immediately: bool = False) -> None:
+        first = run_immediately
         while self._running:
             try:
                 await self._execute_cycle()
@@ -72,7 +73,9 @@ class BotManager:
             except Exception as exc:
                 self._last_error = str(exc)
                 logger.error("bot_loop_error", error=str(exc))
-            await asyncio.sleep(self._settings.market_poll_interval_seconds)
+            if not first:
+                await asyncio.sleep(self._settings.market_poll_interval_seconds)
+            first = False
 
     async def _execute_cycle(self) -> dict:
         last_exc: Exception | None = None

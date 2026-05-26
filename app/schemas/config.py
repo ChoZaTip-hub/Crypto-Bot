@@ -20,3 +20,17 @@ class BotConfigUpdateSchema(BaseModel):
     kill_switch: bool | None = None
     max_risk_per_trade: float | None = None
     max_open_positions: int | None = None
+
+
+class TradingParamsSchema(BaseModel):
+    position_size_mode: str = "fixed_usdt"
+    order_usdt: float = Field(default=100.0, ge=10, le=1_000_000)
+    entry_order_type: str = Field(default="Market", pattern="^(Market|Limit)$")
+    max_risk_per_trade: float | None = Field(default=None, ge=0.001, le=0.2)
+
+
+class TradingParamsUpdateSchema(BaseModel):
+    position_size_mode: str | None = None
+    order_usdt: float | None = Field(default=None, ge=10, le=1_000_000)
+    entry_order_type: str | None = None
+    max_risk_per_trade: float | None = Field(default=None, ge=0.001, le=0.2)

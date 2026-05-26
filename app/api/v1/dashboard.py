@@ -3,6 +3,7 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import BackgroundManagerDep, BotManagerDep, SessionDep, SettingsDep
+from app.core.config import Settings
 from app.core.logging import get_logger
 from app.core.timeframes import BYBIT_TIMEFRAME_LABELS, label_for_timeframe
 from app.db.repositories.audit_repo import AuditRepository
@@ -20,8 +21,13 @@ from app.exchanges.bybit_client import BybitClient
 from app.exchanges.exchange_types import CandleData
 from app.services.audit_service import AuditService
 from app.services.indicator_service import IndicatorService
+from app.services.live_price_service import fetch_display_price
 from app.services.market_data_service import MarketDataService
+from app.services.symbol_universe import resolve_dashboard_symbols
+from app.services.trade_plan_service import build_fresh_trade_plan, build_quick_live_plan
+from app.strategies.levels import apply_live_trade_levels
 from app.utils.candles import filter_price_outliers
+from app.utils.risk_labels import explain_risk_blocks
 
 logger = get_logger(__name__)
 
@@ -54,13 +60,67 @@ def _build_candle_series(candles: list) -> list[dict]:
 @router.get("/meta")
 async def dashboard_meta(settings: SettingsDep) -> dict:
     """Timeframes and labels for the UI."""
+    symbols = await resolve_dashboard_symbols(settings)
     return {
         "timeframes": [
             {"code": tf, "label": label_for_timeframe(tf)} for tf in settings.timeframes
         ],
-        "symbols": settings.symbol_whitelist,
+        "symbols": symbols,
+        "symbol_count": len(symbols),
+        "bot_trades_whitelist": settings.symbol_whitelist,
         "all_timeframe_labels": BYBIT_TIMEFRAME_LABELS,
     }
+
+
+async def _resolve_display_price(
+    symbol: str, settings: SettingsDep, candle_fallback: float = 0.0
+) -> dict:
+    info = await fetch_display_price(symbol, settings)
+    if info.get("price", 0) <= 0 and candle_fallback > 0:
+        info["price"] = candle_fallback
+        info["source"] = "candle_close"
+    return info
+
+
+@router.get("/live-plan")
+async def dashboard_live_plan(
+    session: SessionDep,
+    settings: SettingsDep,
+    symbol: str = Query("BTCUSDT"),
+    timeframe: str = Query("5"),
+) -> dict:
+    """Trade plan recalculated from current Bybit price (not stale DB entry)."""
+    try:
+        plan = await build_quick_live_plan(
+            session, settings, symbol.upper(), chart_timeframe=timeframe
+        )
+    except Exception as exc:
+        logger.warning("live_plan_failed", symbol=symbol, error=str(exc))
+        return {"symbol": symbol.upper(), "plan": None, "error": str(exc)}
+    if not plan:
+        return {"symbol": symbol.upper(), "plan": None}
+    return {"symbol": symbol.upper(), "plan": plan, "plan_symbol": plan.get("symbol")}
+
+
+@router.get("/live-price")
+async def dashboard_live_price(
+    settings: SettingsDep,
+    symbol: str = Query("BTCUSDT"),
+) -> dict:
+    """Display price = Bybit mainnet (same as TradingView BYBIT:*)."""
+    symbol = symbol.upper()
+    info = await fetch_display_price(symbol, settings)
+    info["note_ru"] = _price_note_ru(settings, info)
+    return info
+
+
+def _price_note_ru(settings: Settings, info: dict) -> str:
+    if not settings.use_bybit_market_data:
+        return "Демо-данные, не Bybit."
+    return (
+        "Вход / SL / TP пересчитываются от текущей цены Bybit и ATR (5m). "
+        "Не из старых записей в базе."
+    )
 
 
 async def _load_candles(
@@ -150,40 +210,56 @@ async def dashboard_overview(
                     k: float(v) for k, v in tf_ind.items() if isinstance(v, (int, float))
                 }
 
-        if indicators_all_tf:
+        candle_close = float(candles[-1].close) if candles else 0.0
+        try:
+            fresh_plan = await build_fresh_trade_plan(
+                session,
+                settings,
+                symbol,
+                indicators_all_tf,
+                candle_fallback_close=candle_close,
+                chart_timeframe=timeframe,
+            )
+        except Exception as plan_exc:
+            logger.warning("overview_trade_plan_failed", error=str(plan_exc))
+            fresh_plan = {
+                "action": "HOLD",
+                "source": "error",
+                "reason": str(plan_exc),
+                "live_price": candle_close,
+            }
+
+        trader_briefing = None
+        if indicators_all_tf and fresh_plan:
             from app.core.constants import SignalAction
             from app.strategies.base import StrategySignal
 
             analysis = MarketAnalysisService()
-            action_enum = SignalAction.HOLD
-            if latest_signal:
-                try:
-                    action_enum = SignalAction(latest_signal.action)
-                except ValueError:
-                    pass
+            pi = await _resolve_display_price(symbol, settings, candle_close)
+            live_px = float(pi.get("price") or 0) or None
             inputs = StrategyInputs(
                 symbol=symbol,
                 timeframes=indicators_all_tf,
-                regime=latest_decision.regime if latest_decision else None,
+                regime=fresh_plan.get("regime") or (latest_decision.regime if latest_decision else None),
+                live_price=live_px,
             )
+            try:
+                action_enum = SignalAction(fresh_plan.get("action") or "HOLD")
+            except ValueError:
+                action_enum = SignalAction.HOLD
             sig = StrategySignal(
                 symbol=symbol,
                 action=action_enum,
-                confidence=latest_signal.confidence if latest_signal else 0.0,
-                reason=latest_signal.reason if latest_signal else "",
-                entry_price=latest_signal.entry_price if latest_signal else None,
-                stop_loss=latest_signal.stop_loss if latest_signal else None,
-                take_profit=latest_signal.take_profit if latest_signal else None,
-                risk_reward_ratio=latest_signal.risk_reward_ratio if latest_signal else None,
+                confidence=float(fresh_plan.get("confidence") or 0),
+                reason=fresh_plan.get("reason") or "",
+                entry_price=fresh_plan.get("entry"),
+                stop_loss=fresh_plan.get("stop_loss"),
+                take_profit=fresh_plan.get("take_profit"),
             )
-            open_positions = await position_repo.get_open_positions()
-            pos = next((p for p in open_positions if p.symbol == symbol), None)
-            if pos:
-                sig.action = SignalAction.BUY
-                sig.entry_price = pos.entry_price
-                sig.stop_loss = pos.stop_loss
-                sig.take_profit = pos.take_profit
-            trader_briefing = analysis.build_briefing(inputs, sig)
+            apply_live_trade_levels(sig, live_px or 0, indicators_all_tf)
+            trader_briefing = analysis.build_briefing(inputs, sig, live_price=live_px)
+
+        price_info = await _resolve_display_price(symbol, settings, candle_close)
 
         return {
             "bot": {
@@ -221,17 +297,30 @@ async def dashboard_overview(
             "symbol": symbol,
             "timeframe": timeframe,
             "candle_source": candle_source,
-            "last_price": float(candles[-1].close) if candles else 0,
+            "last_price": price_info.get("price", 0),
+            "price_source": price_info.get("source"),
+            "price_info": price_info,
+            "price_note": _price_note_ru(settings, price_info),
             "indicators": {
                 k: float(v) for k, v in indicators.items() if isinstance(v, (int, float))
             },
             "indicators_all_timeframes": indicators_all_tf,
             "trader_briefing": trader_briefing,
+            "trade_plan": fresh_plan,
             "signal": _signal_dict(latest_signal, latest_decision),
             "decision_journal": [
                 _decision_dict(d) for d in await decision_repo.get_recent_by_symbol(symbol, 8)
             ],
             "last_cycle_decisions": _last_cycle_decisions(manager),
+            "trading_params": {
+                "position_size_mode": settings.position_size_mode,
+                "order_usdt": settings.order_usdt,
+                "entry_order_type": settings.entry_order_type,
+                "max_risk_per_trade": settings.max_risk_per_trade,
+                "paper_initial_balance": settings.paper_initial_balance,
+            },
+            "bot_activity": _bot_activity_for_symbol(manager, symbol),
+            "risk_guide": _risk_guide_for_user(manager, symbol, settings.kill_switch),
             "risk_events": [
                 {
                     "level": e.level,
@@ -311,44 +400,56 @@ async def chart_data(
             )
         else:
             indicators = {}
-        latest_signal = await signal_repo.get_latest(symbol)
-        open_pos = await PositionRepository(session).get_by_symbol(symbol)
+        indicators_by_tf: dict[str, dict] = {}
+        if series:
+            indicators_by_tf[timeframe] = {
+                k: float(v) for k, v in indicators.items() if isinstance(v, (int, float))
+            }
+        candle_repo = CandleRepository(session)
+        ind_svc = IndicatorService(session, AuditService(session))
+        for tf in list(dict.fromkeys([timeframe, "5", "15", "30", "60", "240"])):
+            if tf in indicators_by_tf:
+                continue
+            tf_rows = await candle_repo.get_by_symbol_and_timeframe(symbol, tf, 120)
+            if len(tf_rows) >= 5:
+                tf_ind = ind_svc.compute_from_ohlcv(
+                    [c.close for c in tf_rows],
+                    [c.high for c in tf_rows],
+                    [c.low for c in tf_rows],
+                    [c.volume for c in tf_rows],
+                )
+                indicators_by_tf[tf] = {
+                    k: float(v) for k, v in tf_ind.items() if isinstance(v, (int, float))
+                }
 
-        trade_plan = None
+        candle_close = float(series[-1]["close"]) if series else (
+            float(candles[-1].close) if candles else 0.0
+        )
+        try:
+            trade_plan = await build_fresh_trade_plan(
+                session,
+                settings,
+                symbol,
+                indicators_by_tf,
+                candle_fallback_close=candle_close,
+                chart_timeframe=timeframe,
+            )
+        except Exception as plan_exc:
+            logger.warning("chart_trade_plan_failed", error=str(plan_exc))
+            trade_plan = {
+                "action": "HOLD",
+                "source": "error",
+                "reason": str(plan_exc),
+                "live_price": candle_close,
+            }
+
         trade_levels: list[dict] = []
         level_specs: list[tuple[str, float | None, str, str]] = []
-
-        if open_pos:
-            trade_plan = {
-                "action": open_pos.side.upper(),
-                "entry": open_pos.entry_price,
-                "stop_loss": open_pos.stop_loss,
-                "take_profit": open_pos.take_profit,
-                "source": "open_position",
-                "reason": (open_pos.entry_explanation or "")[:200],
-                "explanation": open_pos.entry_explanation,
-            }
+        if trade_plan and trade_plan.get("action") in ("BUY", "SELL"):
             level_specs = [
-                ("Entry", open_pos.entry_price, "#2563eb", "solid"),
-                ("Stop Loss", open_pos.stop_loss, "#dc2626", "dashed"),
-                ("Take Profit", open_pos.take_profit, "#16a34a", "dashed"),
-            ]
-        elif latest_signal and latest_signal.action in ("BUY", "SELL"):
-            trade_plan = {
-                "action": latest_signal.action,
-                "entry": latest_signal.entry_price,
-                "stop_loss": latest_signal.stop_loss,
-                "take_profit": latest_signal.take_profit,
-                "confidence": latest_signal.confidence,
-                "reason": latest_signal.reason,
-                "explanation": latest_decision.explanation if latest_decision else latest_signal.reason,
-                "regime": latest_decision.regime if latest_decision else None,
-                "source": "signal",
-            }
-            level_specs = [
-                ("Entry", latest_signal.entry_price, "#2563eb", "solid"),
-                ("Stop Loss", latest_signal.stop_loss, "#dc2626", "dashed"),
-                ("Take Profit", latest_signal.take_profit, "#16a34a", "dashed"),
+                ("Entry", trade_plan.get("entry"), "#2563eb", "solid"),
+                ("Stop Loss", trade_plan.get("stop_loss"), "#dc2626", "dashed"),
+                ("Take Profit", trade_plan.get("take_profit"), "#16a34a", "dashed"),
             ]
 
         for label, val, color, style in level_specs:
@@ -362,9 +463,7 @@ async def chart_data(
                     }
                 )
 
-        last_price = float(series[-1]["close"]) if series else (
-            float(candles[-1].close) if candles else 0.0
-        )
+        price_info = await _resolve_display_price(symbol, settings, candle_close)
 
         return {
             "symbol": symbol,
@@ -374,7 +473,10 @@ async def chart_data(
             "candles": series,
             "candles_dropped": candles_dropped,
             "candle_source": candle_source,
-            "last_price": last_price,
+            "last_price": price_info.get("price", 0),
+            "price_source": price_info.get("source"),
+            "price_info": price_info,
+            "price_note": _price_note_ru(settings, price_info),
             "trade_levels": trade_levels,
             "trade_plan": trade_plan,
             "indicators": {
@@ -409,8 +511,18 @@ async def refresh_market(
             "timeframes": settings.timeframes,
         }
     if symbol and timeframe:
-        counts = await svc.ingest_symbol_tf(symbol.upper(), timeframe)
-        return {"ingested": counts, "source": "bybit", "mode": "single", "symbol": symbol, "timeframe": timeframe}
+        sym = symbol.upper()
+        tfs = list(dict.fromkeys([timeframe, *settings.dashboard_indicator_timeframes]))
+        counts: dict[str, int] = {}
+        for tf in tfs:
+            counts.update(await svc.ingest_symbol_tf(sym, tf))
+        return {
+            "ingested": counts,
+            "source": "bybit",
+            "mode": "symbol_mtf",
+            "symbol": sym,
+            "timeframes": tfs,
+        }
     counts = await svc.ingest_cycle()
     return {
         "ingested": counts,
@@ -461,7 +573,51 @@ def _last_cycle_decisions(manager) -> list[dict]:
                 "explanation": d.get("explanation"),
                 "risk_allowed": d.get("risk_allowed"),
                 "risk_blocks": d.get("risk_blocks"),
+                "suggested_usdt": d.get("suggested_usdt"),
+                "suggested_qty": d.get("suggested_qty"),
+                "order": d.get("order"),
+                "activity": d.get("activity"),
             }
         )
     return out
+
+
+def _risk_guide_for_user(manager, symbol: str, kill_switch: bool = False) -> dict:
+    """Plain-language risk status for the sidebar."""
+    last = manager.last_result or {}
+    sym = symbol.upper()
+    row = next((d for d in (last.get("decisions") or []) if d.get("symbol") == sym), None)
+    blocks = row.get("risk_blocks") if row else []
+    explained = explain_risk_blocks(blocks or [])
+    can_trade = bool(row and row.get("risk_allowed") and row.get("action") in ("BUY", "SELL"))
+    return {
+        "kill_switch_hint": "Аварийный выключатель: если ВКЛ — бот не откроет новые сделки (защита капитала).",
+        "kill_switch_ok": not kill_switch,
+        "last_action": row.get("action") if row else None,
+        "can_trade_last_cycle": can_trade,
+        "blocks": explained,
+        "summary": _risk_summary_ru(explained, row),
+    }
+
+
+def _risk_summary_ru(explained: list[dict], row: dict | None) -> str:
+    if not row:
+        return "Запустите «Старт» или дождитесь цикла — здесь появится, почему сделка разрешена или нет."
+    if row.get("risk_allowed") and row.get("order"):
+        return "Последний цикл: сделка исполнена."
+    if row.get("risk_allowed"):
+        return f"Риск пройден ({row.get('action')}), но ордер не создан."
+    if explained:
+        return "Сделка заблокирована: " + explained[0]["text"]
+    if row.get("action") == "HOLD":
+        return "Сигнал HOLD — входа нет, это нормально."
+    return "Проверьте журнал решений ниже."
+
+
+def _bot_activity_for_symbol(manager, symbol: str) -> str | None:
+    last = manager.last_result or {}
+    for d in last.get("decisions") or []:
+        if d.get("symbol") == symbol.upper():
+            return d.get("activity")
+    return None
 

@@ -14,7 +14,6 @@ from app.exchanges.exchange_types import CandleData
 logger = get_logger(__name__)
 
 PUBLIC_MAINNET = "wss://stream.bybit.com/v5/public/spot"
-PUBLIC_TESTNET = "wss://stream-testnet.bybit.com/v5/public/spot"
 
 
 class BybitWebSocketClient:
@@ -25,7 +24,7 @@ class BybitWebSocketClient:
 
     @property
     def _url(self) -> str:
-        return PUBLIC_TESTNET if self._settings.bybit_testnet else PUBLIC_MAINNET
+        return PUBLIC_MAINNET
 
     async def connect(self) -> None:
         self._ws = await websockets.connect(self._url)

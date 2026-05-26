@@ -7,19 +7,231 @@ const TF_LABELS = {
 
 let refreshTimer = null;
 let ratioTimer = null;
+let livePriceTimer = null;
+let tfChangeTimer = null;
+let refreshAbort = null;
+let lastOverview = null;
 let tvChartKey = "";
+let lastLivePrice = null;
+let lastPriceSource = "";
+let lastLivePlan = null;
+let allSymbols = [];
 
-function updateTradeLevelsPanel(chartData) {
-  const plan = chartData?.trade_plan;
-  const last = chartData?.last_price;
+function formatPrice(v) {
+  if (v == null || Number.isNaN(Number(v))) return "—";
+  return Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+function currentDisplayPrice(chartData, overview) {
+  return lastLivePrice ?? chartData?.last_price ?? overview?.last_price ?? null;
+}
+
+function priceSourceLabel(src) {
+  if (src === "bybit_live") return "Текущая цена (Bybit, как на TV)";
+  if (src === "candle_close") return "Цена (закрытие свечи в БД)";
+  return "Текущая цена";
+}
+
+function updatePriceContextBanner(overview, priceInfo) {
+  const el = $("priceContextBanner");
+  if (!el) return;
+  const note = overview?.price_note || priceInfo?.note_ru;
+  if (!note) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.className = "price-context-banner";
+  el.textContent = note;
+}
+
+function selectedSymbol() {
+  return ($("symbolSelect")?.value || "BTCUSDT").toUpperCase();
+}
+
+function planMatchesSymbol(plan) {
+  if (!plan) return false;
+  const sym = selectedSymbol();
+  return !plan.symbol || String(plan.symbol).toUpperCase() === sym;
+}
+
+function applyLivePlanToLevelCards(plan) {
+  if (!plan || !planMatchesSymbol(plan)) return;
   const set = (id, v) => {
     const el = $(id);
-    if (el) el.textContent = v == null ? "—" : Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
+    if (el) el.textContent = formatPrice(v);
+  };
+  if (plan.action === "BUY" || plan.action === "SELL") {
+    set("lvlEntry", plan.entry);
+    set("lvlStop", plan.stop_loss);
+    set("lvlTp", plan.take_profit);
+  }
+  const lblEntry = $("lblEntry");
+  if (lblEntry && plan.entry != null && (plan.action === "BUY" || plan.action === "SELL")) {
+    if (plan.source === "open_position") {
+      lblEntry.textContent = "Вход (позиция открыта)";
+    } else {
+      const hz = plan.horizon_label || "5m";
+      lblEntry.textContent = `Вход (сейчас · ${hz})`;
+    }
+  }
+}
+
+function renderAiAnalysis(ai) {
+  const el = $("aiAnalysisPanel");
+  const btn = $("btnAiAnalyze");
+  if (!el) return;
+  if (!ai) {
+    el.textContent = "Нажмите «Запросить ИИ» (нужен AI_API_KEY в .env)";
+    return;
+  }
+  if (ai.enabled === false || ai.error) {
+    el.className = "ai-analysis-panel hint";
+    el.textContent = ai.error || ai.hint || "ИИ не настроен";
+    if (btn) btn.disabled = false;
+    return;
+  }
+  const act = (ai.action || "HOLD").toLowerCase();
+  el.className = "ai-analysis-panel " + (act === "buy" || act === "sell" ? act : "");
+  const disagree = ai.disagrees_with_rules
+    ? "<p class='hint'>⚠ ИИ не согласен с правилами бота</p>"
+    : "";
+  el.innerHTML = `
+    <p class="ai-action">${escapeHtml(ai.action)} · ${(ai.confidence * 100).toFixed(0)}% · ТФ: ${escapeHtml(ai.best_timeframe_label || ai.best_timeframe || "—")}</p>
+    <p>${escapeHtml(ai.summary_ru || "")}</p>
+    ${ai.entry_note_ru ? `<p class="hint"><strong>Вход:</strong> ${escapeHtml(ai.entry_note_ru)}</p>` : ""}
+    ${ai.risk_note_ru ? `<p class="hint"><strong>Риск:</strong> ${escapeHtml(ai.risk_note_ru)}</p>` : ""}
+    ${(ai.patterns || []).length ? `<p class="hint">Паттерны: ${escapeHtml(ai.patterns.join(", "))}</p>` : ""}
+    ${disagree}`;
+}
+
+let aiStatusCache = null;
+
+async function loadAiStatus() {
+  try {
+    const st = await api("/api/v1/ai/status");
+    aiStatusCache = st;
+    const btn = $("btnAiAnalyze");
+    const panel = $("aiAnalysisPanel");
+    if (btn) btn.disabled = !st.configured;
+    if (!st.configured && panel) {
+      renderAiAnalysis({
+        error: "ИИ не настроен",
+        hint: "В .env: AI_ENABLED=true и AI_API_KEY=sk-… (или OPENAI_API_KEY)",
+      });
+      return;
+    }
+    if (panel && st.auto_analyze && !panel.textContent?.includes("%")) {
+      panel.className = "ai-analysis-panel hint";
+      panel.textContent =
+        "Авто-анализ при обновлении страницы (AI_AUTO_ANALYZE). Кнопка — принудительно.";
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function requestAiAnalysis() {
+  const symbol = selectedSymbol();
+  const tf = $("timeframeSelect")?.value || "5";
+  const data = await api(
+    `/api/v1/ai/analyze?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(tf)}`,
+    { method: "POST" }
+  );
+  renderAiAnalysis(data?.ai);
+}
+
+function renderTfSetups(plan) {
+  const el = $("tfSetupsPanel");
+  if (!el) return;
+  if (!plan || !planMatchesSymbol(plan)) {
+    el.innerHTML = "<p class='hint'>Выберите монету…</p>";
+    return;
+  }
+  const setups = plan.setups || [];
+  if (!setups.length) {
+    el.innerHTML =
+      "<p class='hint'>Нет явного BUY/SELL на ТФ — нейтрально или загрузите свечи.</p>";
+    return;
+  }
+  el.innerHTML = setups
+    .map((s) => {
+      const cls = s.action === "BUY" ? "buy" : "sell";
+      return `<div class="tf-setup-row ${cls}">
+        <strong>${escapeHtml(s.label)} · ${escapeHtml(s.action)}</strong>
+        <span>Вход сейчас: ${formatPrice(s.entry)} · SL ${formatPrice(s.stop_loss)} · TP ${formatPrice(s.take_profit)}</span>
+        <span class="hint">${escapeHtml(s.reason || "")}</span>
+      </div>`;
+    })
+    .join("");
+}
+
+function updateTradeLevelsPanel(chartData, overview) {
+  const sym = selectedSymbol();
+  let plan = overview?.trade_plan || chartData?.trade_plan;
+  if (plan && plan.symbol && plan.symbol !== sym) plan = null;
+  if (lastLivePlan && planMatchesSymbol(lastLivePlan)) plan = lastLivePlan;
+  else if (plan && !planMatchesSymbol(plan)) plan = null;
+  const signal = overview?.signal;
+  const last = currentDisplayPrice(chartData, overview);
+  const set = (id, v) => {
+    const el = $(id);
+    if (el) el.textContent = formatPrice(v);
   };
   set("lvlEntry", plan?.entry);
   set("lvlStop", plan?.stop_loss);
   set("lvlTp", plan?.take_profit);
   set("lvlPrice", last);
+  const priceCard = document.querySelector(".level-card.price .lbl");
+  if (priceCard) {
+    const src = lastPriceSource || chartData?.price_source || overview?.price_source || "";
+    priceCard.textContent = priceSourceLabel(src);
+  }
+  if (plan?.horizon_note && plan.source === "live_market") {
+    const foot = $("levelsChartStatus");
+    if (foot && !foot.dataset.horizonSet) {
+      foot.dataset.horizonSet = "1";
+    }
+  }
+  applyLivePlanToLevelCards(plan);
+  renderTfSetups(plan);
+}
+
+async function pollLivePrice() {
+  const symbol = $("symbolSelect")?.value || "BTCUSDT";
+  try {
+    const tf = $("timeframeSelect")?.value || "5";
+    const [data, planRes] = await Promise.all([
+      api(`/api/v1/dashboard/live-price?symbol=${encodeURIComponent(symbol)}`),
+      api(
+        `/api/v1/dashboard/live-plan?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(tf)}`
+      ),
+    ]);
+    if (data?.price > 0) {
+      lastLivePrice = data.price;
+      lastPriceSource = data.source || "bybit_live";
+      const el = $("lvlPrice");
+      if (el) el.textContent = formatPrice(data.price);
+      const liveEl = $("livePriceSidebar");
+      if (liveEl) liveEl.textContent = formatPrice(data.price);
+      updatePriceContextBanner(null, data);
+    }
+    if (planRes?.plan && planRes.symbol === symbol) {
+      lastLivePlan = planRes.plan;
+      applyLivePlanToLevelCards(planRes.plan);
+      renderTfSetups(planRes.plan);
+    }
+  } catch (e) {
+    console.debug("live-price poll", e);
+  }
+}
+
+function startLivePricePoll() {
+  if (livePriceTimer) clearInterval(livePriceTimer);
+  lastLivePrice = null;
+  lastLivePlan = null;
+  pollLivePrice();
+  livePriceTimer = setInterval(pollLivePrice, 2000);
 }
 
 function setStatusHint(msg) {
@@ -64,8 +276,10 @@ function renderTradingViewChart(symbol, timeframe, chartData) {
 
   const wrap = document.createElement("div");
   wrap.className = "tradingview-widget-container tv-embed";
+  wrap.style.height = "100%";
   const inner = document.createElement("div");
   inner.className = "tradingview-widget-container__widget";
+  inner.style.height = "100%";
   wrap.appendChild(inner);
 
   const script = document.createElement("script");
@@ -120,7 +334,7 @@ function updateChartChrome(chartData, symbol, timeframe) {
   const legend = $("chartLegend");
   const candles = chartData?.candles || [];
 
-  updateTradeLevelsPanel(chartData);
+  updateTradeLevelsPanel(chartData, null);
 
   if (status) {
     const srcLabel =
@@ -142,9 +356,10 @@ function updateChartChrome(chartData, symbol, timeframe) {
   }
 }
 
-async function fetchChartData(symbol, timeframe) {
+async function fetchChartData(symbol, timeframe, fetchOpts = {}) {
   return api(
-    `/api/v1/dashboard/chart?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`
+    `/api/v1/dashboard/chart?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`,
+    fetchOpts
   );
 }
 
@@ -173,9 +388,14 @@ async function api(path, options = {}) {
   try {
     res = await fetch(API + path, opts);
   } catch (err) {
-    throw new Error(
-      "Нет связи с API. Запустите в терминале: uvicorn app.main:app --reload --port 8000"
-    );
+    if (err?.name === "AbortError") throw err;
+    const msg = String(err?.message || err);
+    if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("Load failed")) {
+      throw new Error(
+        "Нет связи с API. Запустите в терминале: uvicorn app.main:app --reload --port 8000"
+      );
+    }
+    throw new Error(`Ошибка сети: ${msg}`);
   }
   if (!res.ok) {
     let detail = res.statusText;
@@ -249,19 +469,19 @@ function renderIndicators(indicators) {
 function renderMultiTf(allTf, labels) {
   const panel = $("multiTfPanel");
   if (!panel) return;
-  panel.innerHTML = "";
   const keys = Object.keys(allTf || {});
   if (!keys.length) {
-    panel.innerHTML = '<p class="hint">Нет данных — нажми «Загрузить свечи Bybit»</p>';
+    panel.innerHTML = '<p class="hint">Нет данных — нажми «Загрузить свечи»</p>';
     return;
   }
+  panel.innerHTML = "";
   keys.forEach((tf) => {
     const ind = allTf[tf];
     const card = document.createElement("div");
     card.className = "tf-card";
     const title = (labels && labels[tf]) || tfLabel(tf);
     card.innerHTML = `<h4>${title}</h4><dl>
-      <dt>Цена</dt><dd>${fmt(ind.close)}</dd>
+      <dt>Закрытие свечи</dt><dd>${fmt(ind.close)}</dd>
       <dt>RSI</dt><dd>${fmt(ind.rsi)}</dd>
       <dt>ADX</dt><dd>${fmt(ind.adx)}</dd>
       <dt>EMA</dt><dd>${fmt(ind.ema)}</dd>
@@ -271,9 +491,56 @@ function renderMultiTf(allTf, labels) {
   });
 }
 
-function renderTradePlan(plan, signal) {
+function applyTradingParams(params) {
+  if (!params) return;
+  const usdt = $("orderUsdt");
+  const entry = $("entryOrderType");
+  const mode = $("positionSizeMode");
+  if (usdt != null && params.order_usdt != null) usdt.value = params.order_usdt;
+  if (entry && params.entry_order_type) entry.value = params.entry_order_type;
+  if (mode && params.position_size_mode) mode.value = params.position_size_mode;
+}
+
+async function saveTradingParams() {
+  const body = {
+    order_usdt: Number($("orderUsdt")?.value || 100),
+    entry_order_type: $("entryOrderType")?.value || "Market",
+    position_size_mode: $("positionSizeMode")?.value || "fixed_usdt",
+  };
+  await api("/api/v1/bot/trading-params", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  setStatusHint("Настройки сделки сохранены");
+}
+
+function renderBotActivity(activity, lastCycleDecisions, symbol) {
+  const el = $("botActivity");
+  if (!el) return;
+  const sym = symbol || $("symbolSelect")?.value || "BTCUSDT";
+  const row =
+    (lastCycleDecisions || []).find((d) => d.symbol === sym) ||
+    (lastCycleDecisions || [])[0];
+  const text = activity || row?.activity;
+  if (!text) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.textContent = text;
+  el.className = "bot-activity";
+  if (text.includes("не исполнен") || text.includes("заблокирован")) {
+    el.classList.add("warn");
+  } else if (text.includes("HOLD")) {
+    el.classList.add("muted");
+  }
+}
+
+function renderTradePlan(plan, signal, tradingParams, lastCycleDecisions) {
   const el = $("tradePlan");
   if (!el) return;
+  const sym = $("symbolSelect")?.value || "BTCUSDT";
+  const lc = (lastCycleDecisions || []).find((d) => d.symbol === sym);
   const data =
     plan ||
     (signal && signal.action !== "HOLD"
@@ -291,18 +558,33 @@ function renderTradePlan(plan, signal) {
 
   if (!data || data.action === "HOLD") {
     el.className = "trade-plan empty";
-    el.textContent = "Нет сделки — HOLD или риск заблокировал вход";
+    const blocked = lc?.risk_blocks?.length
+      ? `Риск: ${lc.risk_blocks.join(", ")}`
+      : "HOLD — ждём сигнал или согласованность ТФ";
+    el.textContent = `Нет сделки — ${blocked}`;
     return;
   }
 
+  const sizeUsdt =
+    lc?.suggested_usdt ||
+    (tradingParams?.position_size_mode === "fixed_usdt" ? tradingParams?.order_usdt : null);
+  const entryType = tradingParams?.entry_order_type || "Market";
+  const horizon = data.horizon_label ? ` · горизонт ${data.horizon_label}` : "";
+
   const cls = data.action === "BUY" || data.action === "Buy" ? "buy" : "sell";
+  const aiTag = data.ai_influenced
+    ? '<p class="hint">План скорректирован ИИ (AI_INFLUENCE_TRADES)</p>'
+    : "";
   el.className = "trade-plan";
   el.innerHTML = `
     <div class="action ${cls}">${data.action}</div>
+    ${aiTag}
     ${data.regime ? `<p class="hint">Режим: ${escapeHtml(data.regime)}</p>` : ""}
     <dl>
       <dt>Уверенность</dt><dd>${data.confidence != null ? (data.confidence * 100).toFixed(0) + "%" : "—"}</dd>
-      <dt>Вход</dt><dd>${fmt(data.entry)}</dd>
+      <dt>Размер</dt><dd>${sizeUsdt ? `~${Number(sizeUsdt).toFixed(0)} USDT` : "—"} · ${entryType === "Market" ? "рынок" : "лимит"}</dd>
+      <dt>Вход (сейчас)</dt><dd>${fmt(data.entry)}${horizon}</dd>
+      <dt>Текущая цена</dt><dd>${fmt(data.live_price || lastLivePrice)}</dd>
       <dt>Stop Loss</dt><dd>${fmt(data.stop_loss)}</dd>
       <dt>Take Profit</dt><dd>${fmt(data.take_profit)}</dd>
     </dl>
@@ -339,15 +621,17 @@ function renderTraderBriefing(briefing, overview) {
 
   const conf = b.confluence || {};
   const trade = b.trade || {};
+  const livePx = b.live_price || lastLivePrice;
   const biasClass = { bullish: "bias-up", bearish: "bias-down", neutral: "bias-flat" };
 
+  const tierLabel = { higher: "старший", mid: "средний", lower: "младший" };
   const tfRows = (b.timeframes || [])
     .map((row) => {
       const cls = biasClass[row.bias] || "bias-flat";
       const biasLabel =
         { bullish: "Бычий", bearish: "Медвежий", neutral: "Нейтральный" }[row.bias] || row.bias;
       return `<tr class="${cls}">
-        <td>${escapeHtml(row.label)}</td>
+        <td>${escapeHtml(tierLabel[row.tier] || "")} · ${escapeHtml(row.label)}</td>
         <td>${biasLabel}</td>
         <td>${escapeHtml(row.reason || "")}</td>
         <td class="num">${fmt(row.close)}</td>
@@ -361,7 +645,8 @@ function renderTraderBriefing(briefing, overview) {
       <div class="brief-plan">
         <h4>План: ${escapeHtml(trade.action)} · уверенность ${trade.confidence_pct ?? "—"}%</h4>
         <dl class="brief-dl">
-          <dt>Вход</dt><dd>${fmt(trade.entry)}</dd>
+          <dt>Вход (цикл бота)</dt><dd>${fmt(trade.entry)}</dd>
+          ${trade.current_price && trade.entry && Math.abs(Number(trade.current_price) - Number(trade.entry)) > 1 ? `<dt>Сейчас на рынке</dt><dd>${fmt(trade.current_price)}</dd>` : ""}
           <dt>Stop Loss</dt><dd>${fmt(trade.stop_loss)} <span class="hint">(${trade.risk_pct_signed ?? trade.risk_pct ?? "—"}%)</span></dd>
           <dt>Take Profit</dt><dd>${fmt(trade.take_profit)} <span class="hint">(+${trade.reward_pct_signed ?? trade.reward_pct ?? "—"}%)</span></dd>
           ${trade.risk_reward ? `<dt>R:R</dt><dd>${Number(trade.risk_reward).toFixed(2)}</dd>` : ""}
@@ -371,9 +656,15 @@ function renderTraderBriefing(briefing, overview) {
     planHtml = '<p class="brief-hold">Сейчас без входа — бот ждёт согласованности по таймфреймам или лучшей точки.</p>';
   }
 
+  const topDown =
+    conf.higher_edge != null
+      ? `<br/><span class="hint">Top-down: старшие ${conf.higher_edge > 0 ? "+" : ""}${conf.higher_edge} · средние ${conf.mid_edge > 0 ? "+" : ""}${conf.mid_edge} · младшие ${conf.lower_edge > 0 ? "+" : ""}${conf.lower_edge}</span>`
+      : "";
+
   el.innerHTML = `
     <p class="brief-headline">${escapeHtml(b.headline || "")}</p>
-    <p class="hint">${escapeHtml(b.mtf_summary || "")}</p>
+    ${livePx ? `<p class="brief-live-price">Текущая цена (Bybit, как TradingView): <strong>${formatPrice(livePx)}</strong></p>` : ""}
+    <p class="hint">${escapeHtml(b.mtf_summary || "")}${topDown}</p>
     <div class="brief-confluence">
       <span>Консенсус ТФ: бычьи <strong>${conf.bullish_weight ?? "—"}</strong> · медвежьи <strong>${conf.bearish_weight ?? "—"}</strong> · edge <strong>${conf.edge ?? "—"}</strong></span>
       <span class="badge-muted">режим: ${escapeHtml(b.regime || "—")}</span>
@@ -471,17 +762,39 @@ function renderDecisionJournal(journal, lastCycle) {
   });
 }
 
-function renderRisk(events, bot) {
+function renderRisk(guide, bot, events) {
   const el = $("riskBox");
-  if (!el || !bot) return;
-  const ks = bot.kill_switch
-    ? '<p class="risk-block">⚠ Kill switch ВКЛ</p>'
-    : '<p class="risk-ok">Kill switch выкл</p>';
-  const items = (events || [])
-    .slice(0, 5)
-    .map((e) => `<li>${escapeHtml(e.message)}</li>`)
+  if (!el) return;
+  const g = guide || {};
+  const ks = g.kill_switch_ok
+    ? '<p class="risk-ok">Аварийный стоп: выкл (норма)</p>'
+    : '<p class="risk-block">⚠ Аварийный стоп ВКЛ — новые сделки запрещены</p>';
+  const summary = g.summary
+    ? `<p class="risk-guide-summary">${escapeHtml(g.summary)}</p>`
+    : "<p class='hint'>Запустите бота — здесь будет причина, если вход заблокирован.</p>";
+  const blocks = (g.blocks || [])
+    .map((b) => `<li>${escapeHtml(b.text || b.code || "")}</li>`)
     .join("");
-  el.innerHTML = ks + `<ul class="audit-list">${items || "<li>Нет событий</li>"}</ul>`;
+  const blocksHtml = blocks
+    ? `<ul class="risk-guide-blocks">${blocks}</ul>`
+    : "";
+  const tech = (events || [])
+    .slice(0, 3)
+    .map((e) => `<li class="hint">${escapeHtml(e.message)}</li>`)
+    .join("");
+  el.innerHTML =
+    ks +
+    summary +
+    blocksHtml +
+    (tech ? `<details class="hint"><summary>Технический журнал</summary><ul class="audit-list">${tech}</ul></details>` : "");
+}
+
+function setAnalysisNote(plan) {
+  const el = $("analysisNote");
+  if (!el) return;
+  el.textContent =
+    plan?.analysis_note ||
+    "Бот анализирует свечи Bybit (не скриншот TV). Смените таймфрейм — уровни пересчитаются.";
 }
 
 function renderLearning(learning) {
@@ -686,49 +999,148 @@ async function loadRatioSection() {
 }
 
 function populateSymbols(symbols) {
+  allSymbols = (symbols || []).map((s) => String(s).toUpperCase());
   const select = $("symbolSelect");
   if (!select) return;
+  const prev = select.value;
   select.innerHTML = "";
-  symbols.forEach((s) => {
+  allSymbols.forEach((s) => {
     const opt = document.createElement("option");
     opt.value = s;
     opt.textContent = s;
     select.appendChild(opt);
   });
+  if (prev && allSymbols.includes(prev)) select.value = prev;
+  const hint = $("symbolCountHint");
+  if (hint) hint.textContent = `${allSymbols.length} пар USDT с Bybit`;
+  filterSymbolOptions($("symbolFilter")?.value || "");
 }
 
-async function loadOverview() {
-  const symbol = $("symbolSelect")?.value || "BTCUSDT";
-  const timeframe = $("timeframeSelect")?.value || "5";
-  const [overview, chartData] = await Promise.all([
-    api(
-      `/api/v1/dashboard/overview?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&include_ratios=false`
-    ),
-    fetchChartData(symbol, timeframe),
-  ]);
+function filterSymbolOptions(query) {
+  const select = $("symbolSelect");
+  if (!select || !allSymbols.length) return;
+  const q = String(query || "")
+    .trim()
+    .toUpperCase();
+  const filtered = q
+    ? allSymbols.filter((s) => s.includes(q))
+    : allSymbols;
+  const prev = select.value;
+  select.innerHTML = "";
+  filtered.slice(0, 200).forEach((s) => {
+    const opt = document.createElement("option");
+    opt.value = s;
+    opt.textContent = s;
+    select.appendChild(opt);
+  });
+  if (prev && filtered.includes(prev)) select.value = prev;
+  else if (filtered.length) select.value = filtered[0];
+}
 
+function applyDashboardData(overview, chartData, symbol, timeframe) {
+  lastOverview = overview;
   updateBotBadges(overview.bot, overview.candle_source || chartData?.candle_source);
   renderIndicators(overview.indicators || chartData?.indicators);
   renderMultiTf(overview.indicators_all_timeframes, overview.bot?.timeframe_labels);
-  renderTradePlan(chartData?.trade_plan, overview.signal);
+  applyTradingParams(overview.trading_params);
+  const displayPlan = overview.trade_plan || chartData?.trade_plan;
+  if (displayPlan) lastLivePlan = displayPlan;
+  renderTradePlan(
+    displayPlan,
+    overview.signal,
+    overview.trading_params,
+    overview.last_cycle_decisions
+  );
+  renderBotActivity(overview.bot_activity, overview.last_cycle_decisions, symbol);
   renderSignal(overview.signal);
   renderTraderBriefing(overview.trader_briefing, overview);
   renderDecisionExplanation(overview, chartData);
   renderDecisionJournal(overview.decision_journal, overview.last_cycle_decisions);
-  renderRisk(overview.risk_events, overview.bot);
+  renderRisk(overview.risk_guide, overview.bot, overview.risk_events);
+  setAnalysisNote(displayPlan);
+  renderTfSetups(displayPlan);
+  if (displayPlan?.ai) renderAiAnalysis(displayPlan.ai);
   renderAudit(overview.audit);
   renderLearning(overview.learning);
   renderChanges(overview.market_changes);
 
+  lastLivePrice = overview.last_price > 0 ? overview.last_price : lastLivePrice;
+  lastPriceSource = overview.price_source || lastPriceSource;
+  updatePriceContextBanner(overview, overview.price_info);
+  updateTradeLevelsPanel(chartData, overview);
   updateChartChrome(chartData, symbol, timeframe);
   renderMainChart(chartData, symbol, timeframe);
 }
 
-async function refreshAll() {
+async function loadOverview(fetchOpts = {}) {
+  const symbol = $("symbolSelect")?.value || "BTCUSDT";
+  const timeframe = $("timeframeSelect")?.value || "5";
+  const [overview, chartData] = await Promise.all([
+    api(
+      `/api/v1/dashboard/overview?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&include_ratios=false`,
+      fetchOpts
+    ),
+    fetchChartData(symbol, timeframe, fetchOpts),
+  ]);
+  applyDashboardData(overview, chartData, symbol, timeframe);
+  return { overview, chartData };
+}
+
+async function ensureCandlesForChart(symbol, timeframe, signal) {
   try {
-    await loadOverview();
+    await api(
+      `/api/v1/dashboard/refresh-market?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`,
+      { method: "POST", signal }
+    );
+  } catch (e) {
+    if (e?.name !== "AbortError") console.debug("auto refresh candles", e);
+  }
+}
+
+async function refreshChartOnly() {
+  const symbol = $("symbolSelect")?.value || "BTCUSDT";
+  const timeframe = $("timeframeSelect")?.value || "5";
+  if (refreshAbort) refreshAbort.abort();
+  refreshAbort = new AbortController();
+  const signal = refreshAbort.signal;
+  try {
+    setStatusHint(`ТФ ${tfLabel(timeframe)}: свечи Bybit + анализ…`);
+    await ensureCandlesForChart(symbol, timeframe, signal);
+    const chartData = await fetchChartData(symbol, timeframe, { signal });
+    const overview = lastOverview || { trade_plan: chartData.trade_plan, price_info: chartData.price_info };
+    if (chartData.trade_plan) {
+      lastLivePlan = chartData.trade_plan;
+      setAnalysisNote(chartData.trade_plan);
+    }
+    updateTradeLevelsPanel(chartData, overview);
+    updateChartChrome(chartData, symbol, timeframe);
+    renderMainChart(chartData, symbol, timeframe);
+    if (lastOverview) {
+      renderTradePlan(
+        chartData.trade_plan || lastOverview.trade_plan,
+        lastOverview.signal,
+        lastOverview.trading_params,
+        lastOverview.last_cycle_decisions
+      );
+    }
+    showApiError("");
+    setStatusHint("");
+  } catch (e) {
+    if (e?.name === "AbortError") return;
+    console.error(e);
+    showApiError(e.message || String(e));
+  }
+}
+
+async function refreshAll() {
+  if (refreshAbort) refreshAbort.abort();
+  refreshAbort = new AbortController();
+  const signal = refreshAbort.signal;
+  try {
+    await loadOverview({ signal });
     showApiError("");
   } catch (e) {
+    if (e?.name === "AbortError") return;
     console.error(e);
     showApiError(e.message || String(e));
   }
@@ -757,8 +1169,11 @@ function bindControls() {
   if (btnStart) {
     btnStart.addEventListener("click", () =>
       withButton(btnStart, async () => {
-        await api("/api/v1/bot/start", { method: "POST" });
-        setStatusHint("Бот запущен в фоне");
+        const r = await api("/api/v1/bot/start", { method: "POST" });
+        setStatusHint(
+          r?.hint ||
+            "Бот запущен: первый цикл сразу, далее каждые несколько сек. Смотри «Что сделал бот»."
+        );
         await refreshAll();
       }, "Запуск…")
     );
@@ -819,6 +1234,18 @@ function bindControls() {
       )
     );
   }
+  const btnSaveTrading = $("btnSaveTrading");
+  if (btnSaveTrading) {
+    btnSaveTrading.addEventListener("click", () =>
+      withButton(btnSaveTrading, () => saveTradingParams(), "Сохранение…")
+    );
+  }
+  const btnAi = $("btnAiAnalyze");
+  if (btnAi) {
+    btnAi.addEventListener("click", () =>
+      withButton(btnAi, () => requestAiAnalysis(), "ИИ…")
+    );
+  }
   if (btnRatioScan) {
     btnRatioScan.addEventListener("click", () =>
       withButton(
@@ -832,13 +1259,23 @@ function bindControls() {
       )
     );
   }
+  $("symbolFilter")?.addEventListener("input", (e) => {
+    filterSymbolOptions(e.target.value);
+  });
   $("symbolSelect")?.addEventListener("change", () => {
     lastChartKey = "";
+    lastLivePlan = null;
+    lastOverview = null;
+    startLivePricePoll();
     refreshAll();
   });
   $("timeframeSelect")?.addEventListener("change", () => {
     lastChartKey = "";
-    refreshAll();
+    if (tfChangeTimer) clearTimeout(tfChangeTimer);
+    tfChangeTimer = setTimeout(() => {
+      startLivePricePoll();
+      refreshChartOnly();
+    }, 300);
   });
 }
 
@@ -869,9 +1306,12 @@ async function init() {
     status.timeframe_labels ||
     Object.fromEntries((meta.timeframes || []).map((t) => [t.code, t.label]));
   populateTimeframes(tfs, labels);
+  applyTradingParams(status.trading_params);
 
   await refreshAll();
   loadRatioSection();
+  loadAiStatus();
+  startLivePricePoll();
 
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(refreshAll, 20000);

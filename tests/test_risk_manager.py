@@ -43,6 +43,18 @@ def test_blocks_stale_data() -> None:
     assert "data_stale" in assessment.blocks
 
 
+def test_blocks_high_atr() -> None:
+    settings = Settings(kill_switch=False, max_atr_pct=0.05)
+    rm = RiskManager(settings)
+    assessment = rm.assess(
+        _signal(SignalAction.BUY),
+        MarketContext("BTCUSDT", 9999999999, 0.08, False),
+        PortfolioState(10000, 0, 0, 0, 0),
+    )
+    assert not assessment.allowed
+    assert "volatility_too_high" in assessment.blocks
+
+
 def test_allows_valid_buy() -> None:
     settings = Settings(
         kill_switch=False,

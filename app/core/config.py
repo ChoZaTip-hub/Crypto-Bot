@@ -3,6 +3,8 @@
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
+import os
+
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
@@ -52,7 +54,6 @@ class Settings(BaseSettings):
     trading_mode: TradingMode = TradingMode.PAPER
     live_trading_enabled: bool = False
 
-    bybit_testnet: bool = True
     bybit_api_key: str = ""
     bybit_api_secret: str = ""
     bybit_category: str = BYBIT_CATEGORY_SPOT
@@ -64,6 +65,9 @@ class Settings(BaseSettings):
     symbol_whitelist: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: list(DEFAULT_SYMBOL_WHITELIST)
     )
+    # whitelist = only env list | bybit_top = top USDT pairs from Bybit API
+    symbol_list_source: str = "bybit_top"
+    symbol_top_limit: int = 120
     timeframes: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: list(DEFAULT_TIMEFRAMES)
     )
@@ -75,8 +79,9 @@ class Settings(BaseSettings):
     min_mtf_edge: float = 1.0
     # TFs shown on dashboard multi-TF panel (not all 9 on every refresh)
     dashboard_indicator_timeframes: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["5", "60", "240", "D"]
+        default_factory=lambda: ["5", "15", "60", "240", "D"]
     )
+    live_price_poll_seconds: float = 2.0
 
     max_risk_per_trade: float = 0.01
     max_daily_loss: float = 0.03
@@ -91,6 +96,12 @@ class Settings(BaseSettings):
     paper_initial_balance: float = 10_000.0
     paper_slippage_bps: float = 5.0
 
+    # Размер позиции: fixed_usdt (фикс. сумма) | risk_percent (% от депозита по SL)
+    position_size_mode: str = "fixed_usdt"
+    order_usdt: float = 100.0
+    # Market = вход сразу по рынку; Limit = лимит по цене entry из сигнала
+    entry_order_type: str = "Market"
+
     api_admin_token: str = ""
     bot_auto_start: bool = False
     market_poll_interval_seconds: int = 5
@@ -103,6 +114,19 @@ class Settings(BaseSettings):
     # Memory & learning
     memory_enabled: bool = True
     learning_enabled: bool = True
+
+    # AI trade analysis (OpenAI-compatible API, structured data — not chart screenshots)
+    ai_enabled: bool = False
+    ai_provider: str = "openai"
+    ai_api_key: str = ""
+    ai_model: str = "gpt-4o-mini"
+    ai_base_url: str = "https://api.openai.com/v1"
+    ai_auto_analyze: bool = True
+    ai_influence_trades: bool = False
+    ai_use_chart_image: bool = False
+    ai_vision_model: str = "gpt-4o-mini"
+    ai_min_confidence_influence: float = 0.62
+    ai_timeout_seconds: float = 45.0
 
     # Live: attach exchange SL/TP on entry; background monitor closes via market order
     live_place_exchange_sl_tp: bool = True
@@ -139,6 +163,13 @@ class Settings(BaseSettings):
         if isinstance(v, TradingMode):
             return v
         return TradingMode(v.lower())
+
+    @model_validator(mode="after")
+    def fill_ai_api_key(self) -> "Settings":
+        if not self.ai_api_key:
+            key = os.getenv("OPENAI_API_KEY") or os.getenv("AI_API_KEY") or ""
+            object.__setattr__(self, "ai_api_key", key)
+        return self
 
     @property
     def is_live_trading(self) -> bool:

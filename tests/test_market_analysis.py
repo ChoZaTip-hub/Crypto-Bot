@@ -32,7 +32,32 @@ def test_trader_briefing_includes_pnl() -> None:
         take_profit=106,
         risk_reward_ratio=2.0,
     )
-    briefing = svc.build_briefing(inputs, signal)
+    briefing = svc.build_briefing(inputs, signal, live_price=100.0)
     assert briefing["trade"]["reward_pct"] == 6.0
     assert briefing["trade"]["risk_pct"] == 2.0
+    assert briefing["trade"]["entry"] == 100.0
+    assert briefing["trade"]["current_price"] == 100.0
     assert len(briefing["timeframes"]) >= 2
+    assert briefing["live_price"] == 100.0
+    assert "higher_edge" in briefing["confluence"]
+
+
+def test_briefing_entry_not_replaced_by_live_price() -> None:
+    svc = MarketAnalysisService()
+    inputs = StrategyInputs(
+        symbol="BTCUSDT",
+        timeframes={"5": {"close": 100, "ema": 99, "rsi": 52, "adx": 22}},
+        regime="trending",
+    )
+    signal = StrategySignal(
+        symbol="BTCUSDT",
+        action=SignalAction.SELL,
+        confidence=0.85,
+        reason="test",
+        entry_price=73620.4,
+        stop_loss=74500.0,
+        take_profit=72000.0,
+    )
+    briefing = svc.build_briefing(inputs, signal, live_price=76098.7)
+    assert briefing["trade"]["entry"] == 73620.4
+    assert briefing["trade"]["current_price"] == 76098.7

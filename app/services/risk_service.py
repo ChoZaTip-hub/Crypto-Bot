@@ -6,6 +6,7 @@ from app.core.config import Settings
 from app.core.constants import AuditEventType, RiskLevel
 from app.db.repositories.position_repo import PositionRepository
 from app.db.repositories.risk_repo import RiskRepository
+from app.risk.atr import atr_pct_from_timeframes
 from app.risk.manager import MarketContext, PortfolioState, RiskAssessment, RiskManager
 from app.services.audit_service import AuditService
 from app.services.market_data_service import MarketDataService
@@ -35,6 +36,8 @@ class RiskService:
         daily_pnl_pct: float,
         drawdown_pct: float,
         primary_timeframe: str = "5",
+        *,
+        timeframes: dict[str, dict] | None = None,
     ) -> RiskAssessment:
         positions = await self._position_repo.get_open_positions()
         open_for_symbol = next((p for p in positions if p.symbol == signal.symbol), None)
@@ -44,10 +47,11 @@ class RiskService:
                 if p.symbol == signal.symbol:
                     symbol_exposure = ((p.current_price or p.entry_price) * p.qty) / equity
 
+        atr_pct = atr_pct_from_timeframes(timeframes or {})
         market = MarketContext(
             symbol=signal.symbol,
             last_candle_ts=self._market_data.get_last_ts(signal.symbol, primary_timeframe),
-            atr_pct=signal.risk_score,
+            atr_pct=atr_pct,
             data_stale=self._market_data.is_data_stale(signal.symbol, primary_timeframe),
         )
         portfolio = PortfolioState(

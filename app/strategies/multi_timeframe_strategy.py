@@ -7,7 +7,12 @@ from app.core.constants import SignalAction
 from app.strategies.base import BaseStrategy, StrategyInputs, StrategySignal
 from app.strategies.mean_reversion_strategy import MeanReversionStrategy
 from app.strategies.signal_combiner import SignalCombiner
-from app.services.market_analysis_service import _bias_for_tf, _tf_weight
+from app.services.market_analysis_service import (
+    _bias_for_tf,
+    _tf_tier,
+    _tf_weight,
+    _tier_edge,
+)
 from app.strategies.trend_strategy import TrendStrategy
 
 
@@ -95,15 +100,18 @@ class MultiTimeframeStrategy(BaseStrategy):
         if signal.action == SignalAction.HOLD:
             return signal
 
+        rows: list[dict] = []
         bull_w = bear_w = 0.0
         for tf, ind in inputs.timeframes.items():
             bias, _ = _bias_for_tf(ind)
             w = _tf_weight(tf)
+            rows.append({"tier": _tf_tier(tf), "bias": bias, "weight": w})
             if bias == "bullish":
                 bull_w += w
             elif bias == "bearish":
                 bear_w += w
         edge = bull_w - bear_w
+        h_edge = _tier_edge(rows, "higher")
 
         if signal.confidence < min_conf:
             signal.action = SignalAction.HOLD
@@ -112,12 +120,25 @@ class MultiTimeframeStrategy(BaseStrategy):
             )
             return signal
 
-        if signal.action == SignalAction.BUY and edge < min_edge:
-            signal.action = SignalAction.HOLD
-            signal.reason = f"BUY отклонён: ТФ не поддерживают (edge={edge:.1f} < {min_edge})"
-        elif signal.action == SignalAction.SELL and edge > -min_edge:
-            signal.action = SignalAction.HOLD
-            signal.reason = f"SELL отклонён: нет медвежьего консенсуса (edge={edge:.1f})"
+        if signal.action == SignalAction.BUY:
+            if h_edge < 0.5:
+                signal.action = SignalAction.HOLD
+                signal.reason = f"BUY отклонён: старшие ТФ не бычьи (edge={h_edge:.1f})"
+            elif edge < min_edge:
+                signal.action = SignalAction.HOLD
+                signal.reason = f"BUY отклонён: общий консенсус слабый (edge={edge:.1f})"
+        elif signal.action == SignalAction.SELL:
+            if h_edge > -0.5:
+                signal.action = SignalAction.HOLD
+                signal.reason = f"SELL отклонён: старшие ТФ не медвежьи (edge={h_edge:.1f})"
+            elif edge > -min_edge:
+                signal.action = SignalAction.HOLD
+                signal.reason = f"SELL отклонён: нет медвежьего консенсуса (edge={edge:.1f})"
+
+        if signal.action != SignalAction.HOLD and inputs.live_price:
+            from app.strategies.levels import apply_live_trade_levels
+
+            apply_live_trade_levels(signal, inputs.live_price, inputs.timeframes)
         return signal
 
     async def decide(self, inputs: StrategyInputs) -> StrategySignal:

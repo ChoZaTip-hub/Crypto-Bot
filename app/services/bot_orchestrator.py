@@ -64,11 +64,26 @@ class BotOrchestrator:
 
         for symbol in self._settings.symbol_whitelist:
             inputs, bundle, _ = await self._strategy.analyze_symbol(symbol)
+            if self._settings.ai_influence_trades and self._settings.ai_enabled:
+                from app.services.ai.integration import apply_ai_to_signal
+
+                chart_tf = (
+                    self._settings.timeframes[0]
+                    if self._settings.timeframes
+                    else "5"
+                )
+                bundle.signal = await apply_ai_to_signal(
+                    self._settings,
+                    inputs,
+                    bundle.signal,
+                    chart_timeframe=chart_tf,
+                )
             risk = await self._risk.evaluate(
                 bundle.signal,
                 equity=portfolio["equity"],
                 daily_pnl_pct=self._portfolio.daily_pnl_pct,
                 drawdown_pct=portfolio["drawdown_pct"],
+                timeframes=inputs.timeframes,
             )
             signal = await self._strategy.finalize_and_persist(inputs, bundle, risk=risk)
 
@@ -87,6 +102,12 @@ class BotOrchestrator:
                 )
 
             briefing = (inputs.memory_context or {}).get("trader_briefing")
+            activity = _cycle_activity_message(
+                symbol=symbol,
+                action=signal.action.value,
+                risk=risk,
+                order=order,
+            )
             results.append(
                 {
                     "symbol": symbol,
@@ -101,7 +122,10 @@ class BotOrchestrator:
                     "take_profit": signal.take_profit,
                     "risk_allowed": risk.allowed,
                     "risk_blocks": risk.blocks,
+                    "suggested_qty": risk.suggested_qty,
+                    "suggested_usdt": risk.suggested_usdt,
                     "order": order,
+                    "activity": activity,
                 }
             )
 
@@ -110,7 +134,44 @@ class BotOrchestrator:
             "portfolio": portfolio,
             "decisions": results,
             "market_source": "bybit" if self._settings.use_bybit_market_data else "mock",
+            "trading_params": _trading_params_snapshot(self._settings),
         }
+
+
+def _trading_params_snapshot(settings: Settings) -> dict:
+    return {
+        "position_size_mode": settings.position_size_mode,
+        "order_usdt": settings.order_usdt,
+        "entry_order_type": settings.entry_order_type,
+        "max_risk_per_trade": settings.max_risk_per_trade,
+        "trading_mode": settings.trading_mode.value,
+        "paper_initial_balance": settings.paper_initial_balance,
+    }
+
+
+def _cycle_activity_message(
+    *,
+    symbol: str,
+    action: str,
+    risk,
+    order: dict | None,
+) -> str:
+    if action == "HOLD":
+        return f"{symbol}: без сделки (HOLD) — нет согласованного сигнала"
+    if order:
+        qty = order.get("qty") or order.get("filled_qty")
+        px = order.get("fill_price")
+        usdt = order.get("notional_usdt")
+        kind = order.get("order_type", "Market")
+        extra = f", ~{usdt:.0f} USDT" if usdt else ""
+        return (
+            f"{symbol}: {action} исполнен ({kind}) — "
+            f"{qty} @ {px}{extra}. Выход по SL/TP — монитор 24/7"
+        )
+    if not risk.allowed:
+        blocks = ", ".join(risk.blocks) if risk.blocks else "риск"
+        return f"{symbol}: {action} не исполнен — {blocks}"
+    return f"{symbol}: {action} — ордер не создан"
 
     async def run_once(self) -> dict[str, Any]:
         return await self.run_pipeline()
