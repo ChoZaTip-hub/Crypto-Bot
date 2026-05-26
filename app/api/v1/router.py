@@ -11,7 +11,6 @@ from app.api.v1 import (
     learning,
     market,
     memory,
-    news,
     orders,
     positions,
     risk,
@@ -29,6 +28,5 @@ api_router.include_router(signals.router)
 api_router.include_router(orders.router)
 api_router.include_router(positions.router)
 api_router.include_router(risk.router)
-api_router.include_router(news.router)
 api_router.include_router(backtests.router)
 api_router.include_router(admin.router)

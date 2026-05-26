@@ -17,7 +17,6 @@ class MarketContext:
     last_candle_ts: int
     atr_pct: float
     data_stale: bool
-    major_news_block: bool
 
 
 @dataclass
@@ -36,7 +35,6 @@ class RiskAssessment:
     risk_score: float = 0.0
     daily_loss_ok: bool = True
     data_fresh_ok: bool = True
-    major_news_block: bool = False
     suggested_qty: float = 0.0
 
 
@@ -63,8 +61,6 @@ class RiskManager:
             blocks.append("circuit_breaker_drawdown")
         if market.data_stale:
             blocks.append("data_stale")
-        if market.major_news_block:
-            blocks.append("major_news_block")
         if market.atr_pct > self._settings.max_atr_pct:
             blocks.append("volatility_too_high")
         if portfolio.daily_pnl_pct <= -self._settings.max_daily_loss:
@@ -95,6 +91,5 @@ class RiskManager:
             risk_score=risk_score,
             daily_loss_ok=portfolio.daily_pnl_pct > -self._settings.max_daily_loss,
             data_fresh_ok=not market.data_stale,
-            major_news_block=market.major_news_block,
             suggested_qty=suggested_qty,
         )

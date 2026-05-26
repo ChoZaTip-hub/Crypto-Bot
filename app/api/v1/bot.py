@@ -1,6 +1,6 @@
 """Bot control endpoints."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import BackgroundManagerDep, BotManagerDep, SettingsDep
 from app.core.security import verify_admin_token
@@ -46,8 +46,11 @@ async def stop_bot(manager: BotManagerDep) -> dict:
 
 @router.post("/run-once")
 async def run_once(manager: BotManagerDep) -> dict:
-    result = await manager.run_once()
-    return {"status": "ok", "result": result}
+    try:
+        result = await manager.run_once()
+        return {"status": "ok", "result": result}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/config", response_model=BotConfigSchema)

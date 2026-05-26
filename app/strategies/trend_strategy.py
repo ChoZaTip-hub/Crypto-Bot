@@ -16,16 +16,18 @@ class TrendStrategy(BaseStrategy):
 
         action = SignalAction.HOLD
         confidence = 0.3
-        reason_parts = [f"regime={inputs.regime}", f"adx={adx:.1f}"]
+        reason_parts = [f"режим={inputs.regime}", f"ADX={adx:.1f}"]
 
         if adx > 25 and close > ema:
             action = SignalAction.BUY
             confidence = min(0.85, 0.5 + adx / 100)
-            reason_parts.append("uptrend_ema")
+            reason_parts.append("цена выше EMA, восходящий тренд")
         elif adx > 25 and close < ema:
             action = SignalAction.SELL
             confidence = min(0.85, 0.5 + adx / 100)
-            reason_parts.append("downtrend_ema")
+            reason_parts.append("цена ниже EMA, нисходящий тренд")
+        elif adx <= 25:
+            reason_parts.append("слабый тренд (ADX≤25)")
 
         stop = close - 2 * atr if action == SignalAction.BUY else close + 2 * atr if action == SignalAction.SELL else None
         tp = close + 3 * atr if action == SignalAction.BUY else close - 3 * atr if action == SignalAction.SELL else None

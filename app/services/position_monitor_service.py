@@ -6,9 +6,11 @@ from app.core.config import Settings
 from app.core.logging import get_logger
 from app.db.repositories.candle_repo import CandleRepository
 from app.db.repositories.position_repo import PositionRepository
+from app.db.repositories.strategy_decision_repo import StrategyDecisionRepository
 from app.exchanges.bybit_client import BybitClient
 from app.exchanges.mock_exchange import MockExchange
 from app.services.audit_service import AuditService
+from app.services.decision_explanation import build_exit_explanation
 from app.services.execution_service import ExecutionService
 from app.services.learning_service import LearningService
 
@@ -18,8 +20,10 @@ logger = get_logger(__name__)
 class PositionMonitorService:
     def __init__(self, session: AsyncSession, settings: Settings) -> None:
         self._settings = settings
+        self._session = session
         self._position_repo = PositionRepository(session)
         self._candle_repo = CandleRepository(session)
+        self._decision_repo = StrategyDecisionRepository(session)
         self._audit = AuditService(session)
         self._learning = LearningService(session, self._audit)
         self._bybit = BybitClient(settings)
@@ -50,7 +54,7 @@ class PositionMonitorService:
                 continue
 
             pos.current_price = price
-            await self._position_repo._session.flush()
+            await self._session.flush()
 
             exit_reason: str | None = None
             is_long = pos.side.lower() in ("buy", "long")
@@ -70,9 +74,30 @@ class PositionMonitorService:
             if exit_reason is None:
                 continue
 
+            entry_note = pos.entry_explanation
+            if not entry_note and pos.correlation_id:
+                decisions = await self._decision_repo.get_by_correlation_id(pos.correlation_id)
+                if decisions:
+                    entry_note = decisions[0].explanation
+
+            exit_explanation = build_exit_explanation(
+                symbol=pos.symbol,
+                side=pos.side,
+                entry_price=pos.entry_price,
+                exit_price=price,
+                exit_reason=exit_reason,
+                trigger_price=price,
+                stop_loss=pos.stop_loss,
+                take_profit=pos.take_profit,
+                entry_explanation=entry_note,
+            )
+
             try:
                 result = await self._execution.close_position_sl_tp(
-                    pos, exit_reason=exit_reason, trigger_price=price
+                    pos,
+                    exit_reason=exit_reason,
+                    trigger_price=price,
+                    exit_explanation=exit_explanation,
                 )
             except Exception as exc:
                 logger.error(
@@ -103,9 +128,10 @@ class PositionMonitorService:
                 entry_price=pos.entry_price,
                 exit_price=result.get("exit_price", price),
                 exit_reason=exit_reason,
+                features={"exit_explanation": exit_explanation},
             )
-            item = {**result, "learning": learning}
+            item = {**result, "learning": learning, "explanation": exit_explanation}
             closed.append(item)
-            logger.info("position_closed_sl_tp", **item)
+            logger.info("position_closed_sl_tp", symbol=pos.symbol, exit_reason=exit_reason)
 
         return closed

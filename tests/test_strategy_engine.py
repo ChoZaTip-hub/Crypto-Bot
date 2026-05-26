@@ -35,16 +35,3 @@ async def test_multi_timeframe_returns_signal() -> None:
     assert signal.correlation_id
     assert signal.reason
 
-
-@pytest.mark.asyncio
-async def test_high_impact_sentiment_blocks() -> None:
-    strategy = MultiTimeframeStrategy()
-    inputs = StrategyInputs(
-        symbol="BTCUSDT",
-        timeframes={
-            "60": {"close": 100, "ema": 98, "adx": 30, "atr": 2, "bb_width": 0.05},
-        },
-        sentiment_high_impact=True,
-    )
-    signal = await strategy.decide(inputs)
-    assert signal.action == SignalAction.HOLD

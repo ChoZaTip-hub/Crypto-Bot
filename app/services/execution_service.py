@@ -119,28 +119,48 @@ class ExecutionService:
                     "is_open": True,
                     "opened_at": utc_now(),
                     "correlation_id": signal.correlation_id,
+                    "entry_explanation": signal.explanation or signal.reason,
                 }
             )
+            await self._audit.log(
+                AuditEventType.ORDER_PLACED,
+                correlation_id=signal.correlation_id,
+                payload={
+                    "order_id": order_id,
+                    "mode": self._settings.trading_mode.value,
+                    "qty": risk.suggested_qty,
+                    "exchange_sl_tp": attach_sl_tp,
+                    "stop_loss": signal.stop_loss,
+                    "take_profit": signal.take_profit,
+                    "event": "position_opened",
+                    "explanation": signal.explanation or signal.reason,
+                },
+            )
         else:
+            pos = await self._position_repo.get_by_symbol(signal.symbol)
+            exit_note = signal.explanation or signal.reason
+            if pos and exit_note:
+                pos.exit_explanation = exit_note
+                await self._position_repo._session.flush()
             await self._position_repo.close_position(signal.symbol, fill_price)
+            await self._audit.log(
+                AuditEventType.ORDER_PLACED,
+                correlation_id=signal.correlation_id,
+                payload={
+                    "order_id": order_id,
+                    "mode": self._settings.trading_mode.value,
+                    "qty": risk.suggested_qty,
+                    "event": "position_closed_by_signal",
+                    "explanation": exit_note,
+                },
+            )
 
-        await self._audit.log(
-            AuditEventType.ORDER_PLACED,
-            correlation_id=signal.correlation_id,
-            payload={
-                "order_id": order_id,
-                "mode": self._settings.trading_mode.value,
-                "qty": risk.suggested_qty,
-                "exchange_sl_tp": attach_sl_tp,
-                "stop_loss": signal.stop_loss,
-                "take_profit": signal.take_profit,
-            },
-        )
         return {
             "order_id": order_id,
             "status": "filled",
             "exchange_order_id": result.exchange_order_id,
             "exchange_sl_tp": attach_sl_tp,
+            "explanation": signal.explanation or signal.reason,
         }
 
     async def close_position_sl_tp(
@@ -148,6 +168,7 @@ class ExecutionService:
         position: Position,
         exit_reason: str,
         trigger_price: float,
+        exit_explanation: str | None = None,
     ) -> dict | None:
         """Close open position on exchange (live) or paper mock; record fill + learning hook."""
         if not position.is_open or position.qty <= 0:
@@ -237,6 +258,10 @@ class ExecutionService:
             }
         )
 
+        if exit_explanation:
+            position.exit_explanation = exit_explanation
+            await self._position_repo._session.flush()
+
         closed = await self._position_repo.close_position(position.symbol, exit_price)
         if closed:
             pnl = (
@@ -257,6 +282,7 @@ class ExecutionService:
                 "trigger_price": trigger_price,
                 "mode": self._settings.trading_mode.value,
                 "exchange_order_id": result.exchange_order_id,
+                "explanation": exit_explanation,
             },
         )
 
@@ -266,6 +292,7 @@ class ExecutionService:
             "exit_price": exit_price,
             "exchange_order_id": result.exchange_order_id,
             "order_id": order_id,
+            "explanation": exit_explanation,
         }
 
     async def close_position_manual(self, symbol: str, qty: float) -> dict | None:

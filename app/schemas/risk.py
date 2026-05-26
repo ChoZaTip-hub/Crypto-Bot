@@ -9,7 +9,6 @@ class RiskCheckResultSchema(BaseModel):
     risk_score: float
     daily_loss_ok: bool
     data_fresh_ok: bool
-    major_news_block: bool
     suggested_qty: float = 0.0
 
 

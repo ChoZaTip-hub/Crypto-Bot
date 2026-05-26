@@ -9,7 +9,7 @@ Production-oriented MVP for an AI-assisted crypto trading bot.
 - Python 3.12, FastAPI, asyncio, SQLAlchemy 2.0 async, Alembic, Pydantic v2
 - PostgreSQL, Redis
 - Bybit V5 (spot) via `pybit` — testnet/live switch
-- Multi-source news: RSS (CoinDesk, Cointelegraph, CryptoSlate, Decrypt, …), Bybit Announcements, optional Crypto News API
+- Chart-based strategy: multi-timeframe indicators, memory snapshots, adaptive learning from trade outcomes
 
 ## Architecture
 
@@ -17,6 +17,8 @@ Production-oriented MVP for an AI-assisted crypto trading bot.
 Market Data → Indicators → Strategy → Risk → Execution → Audit
      ↑           ↑            ↑         ↑        ↑
   Bybit/Mock   Postgres    Multi-TF   Rules   Paper/Live
+                    ↑
+              Memory & Learning (SL/TP outcomes)
 ```
 
 ## Quick Start
@@ -51,8 +53,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 Открой в браузере: **http://localhost:8000/**
 
 - Старт / стоп бота, один цикл
-- График свечей Bybit + линии индикаторов и entry/SL/TP
-- Новости, сигналы, риск, audit
+- График свечей Bybit + TradingView + уровни Entry/SL/TP
+- Сигналы, индикаторы, обучение, риск, audit
 
 ### 6. Health check
 
@@ -98,9 +100,8 @@ BOT_AUTO_START=true         # or POST /api/v1/bot/start
 | `GET /api/v1/orders` | Orders & fills |
 | `GET /api/v1/positions` | Open positions |
 | `GET /api/v1/risk/status` | Risk state |
-| `GET /api/v1/news` | News feed |
-| `GET /api/v1/news/sources` | Configured news providers |
-| `POST /api/v1/news/ingest` | Pull RSS + Bybit + Crypto News API |
+| `GET /api/v1/memory/*` | Market memory snapshots |
+| `GET /api/v1/learning/*` | Adaptive learning stats |
 | `POST /api/v1/backtests/run` | Run backtest |
 | `GET /api/v1/admin/audit` | Audit log |
 | `WS /ws` | Realtime events |
@@ -121,16 +122,6 @@ pytest -v
 ## Project Structure
 
 See `app/` for modular packages: `exchanges/`, `indicators/`, `strategies/`, `risk/`, `services/`, `backtesting/`, `workers/`, `realtime/`.
-
-## News sources
-
-| Provider | Config | Notes |
-|----------|--------|-------|
-| RSS | `NEWS_RSS_URLS` (defaults in `app/core/news_sources.py`) | CoinDesk, Cointelegraph, CryptoSlate, Decrypt, The Defiant, macro (Yahoo, CNBC), … |
-| Bybit Announcements | `BYBIT_ANNOUNCEMENTS_ENABLED=true` | Official `pybit` `HTTP.get_announcement()` — [V5 API](https://bybit-exchange.github.io/docs/v5/announcement) |
-| Crypto News API | `CRYPTO_NEWS_API_KEY` | Optional aggregator at [cryptonews-api.com](https://cryptonews-api.com) |
-
-High-impact Bybit events (listings, delistings, maintenance) feed into sentiment risk blocks.
 
 ## Disclaimer
 

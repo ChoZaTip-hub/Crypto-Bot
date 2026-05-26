@@ -34,7 +34,6 @@ class RiskService:
         equity: float,
         daily_pnl_pct: float,
         drawdown_pct: float,
-        major_news_block: bool,
         primary_timeframe: str = "5",
     ) -> RiskAssessment:
         positions = await self._position_repo.get_open_positions()
@@ -49,7 +48,6 @@ class RiskService:
             last_candle_ts=self._market_data.get_last_ts(signal.symbol, primary_timeframe),
             atr_pct=signal.risk_score,
             data_stale=self._market_data.is_data_stale(signal.symbol, primary_timeframe),
-            major_news_block=major_news_block,
         )
         portfolio = PortfolioState(
             equity=equity,

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, String
+from sqlalchemy import DateTime, Float, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -25,3 +25,5 @@ class Position(Base):
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     correlation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    entry_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    exit_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)

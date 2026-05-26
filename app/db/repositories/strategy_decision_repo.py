@@ -26,3 +26,22 @@ class StrategyDecisionRepository(BaseRepository[StrategyDecision]):
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_recent_by_symbol(self, symbol: str, limit: int = 10) -> list[StrategyDecision]:
+        stmt = (
+            select(StrategyDecision)
+            .where(StrategyDecision.symbol == symbol)
+            .order_by(StrategyDecision.created_at.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_correlation_id(self, correlation_id: str) -> list[StrategyDecision]:
+        stmt = (
+            select(StrategyDecision)
+            .where(StrategyDecision.correlation_id == correlation_id)
+            .order_by(StrategyDecision.created_at.desc())
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())

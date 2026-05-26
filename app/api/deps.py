@@ -3,7 +3,7 @@
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -28,11 +28,23 @@ def get_settings_dep() -> Settings:
 
 
 def get_bot_manager(request: Request) -> BotManager:
-    return request.app.state.bot_manager
+    mgr = getattr(request.app.state, "bot_manager", None)
+    if mgr is None:
+        raise HTTPException(
+            status_code=503,
+            detail="API не готов. Запустите сервер: uvicorn app.main:app --reload --port 8000",
+        )
+    return mgr
 
 
 def get_background_manager(request: Request) -> BackgroundManager:
-    return request.app.state.background_manager
+    mgr = getattr(request.app.state, "background_manager", None)
+    if mgr is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Фоновые сервисы не запущены. Перезапустите uvicorn.",
+        )
+    return mgr
 
 
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]

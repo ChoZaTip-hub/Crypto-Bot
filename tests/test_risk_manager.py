@@ -24,7 +24,7 @@ def test_blocks_kill_switch() -> None:
     rm = RiskManager(settings)
     assessment = rm.assess(
         _signal(),
-        MarketContext("BTCUSDT", 0, 0.01, False, False),
+        MarketContext("BTCUSDT", 0, 0.01, False),
         PortfolioState(10000, 0, 0, 0, 0),
     )
     assert not assessment.allowed
@@ -36,23 +36,11 @@ def test_blocks_stale_data() -> None:
     rm = RiskManager(settings)
     assessment = rm.assess(
         _signal(),
-        MarketContext("BTCUSDT", 0, 0.01, True, False),
+        MarketContext("BTCUSDT", 0, 0.01, True),
         PortfolioState(10000, 0, 0, 0, 0),
     )
     assert not assessment.allowed
     assert "data_stale" in assessment.blocks
-
-
-def test_blocks_major_news() -> None:
-    settings = Settings(kill_switch=False)
-    rm = RiskManager(settings)
-    assessment = rm.assess(
-        _signal(),
-        MarketContext("BTCUSDT", 9999999999, 0.01, False, True),
-        PortfolioState(10000, 0, 0, 0, 0),
-    )
-    assert not assessment.allowed
-    assert "major_news_block" in assessment.blocks
 
 
 def test_allows_valid_buy() -> None:
@@ -65,7 +53,7 @@ def test_allows_valid_buy() -> None:
     rm = RiskManager(settings)
     assessment = rm.assess(
         _signal(SignalAction.BUY),
-        MarketContext("BTCUSDT", 9999999999, 0.01, False, False),
+        MarketContext("BTCUSDT", 9999999999, 0.01, False),
         PortfolioState(10000, 0, 0, 0, 0),
     )
     assert assessment.allowed

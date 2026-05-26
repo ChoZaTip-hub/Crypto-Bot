@@ -7,20 +7,18 @@ from app.core.logging import get_logger
 from app.core.timeframes import BYBIT_TIMEFRAME_LABELS, label_for_timeframe
 from app.db.repositories.audit_repo import AuditRepository
 from app.db.repositories.candle_repo import CandleRepository
-from app.db.repositories.news_repo import NewsRepository
 from app.db.repositories.order_repo import OrderRepository
 from app.db.repositories.position_repo import PositionRepository
 from app.db.repositories.risk_repo import RiskRepository
 from app.db.repositories.market_change_repo import MarketChangeRepository
 from app.db.repositories.signal_repo import SignalRepository
+from app.db.repositories.strategy_decision_repo import StrategyDecisionRepository
 from app.services.learning_service import LearningService
 from app.exchanges.bybit_client import BybitClient
 from app.exchanges.exchange_types import CandleData
 from app.services.audit_service import AuditService
 from app.services.indicator_service import IndicatorService
 from app.services.market_data_service import MarketDataService
-from app.services.news_service import NewsService
-
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -86,15 +84,17 @@ async def dashboard_overview(
     try:
         symbol = symbol.upper()
         signal_repo = SignalRepository(session)
-        news_repo = NewsRepository(session)
         risk_repo = RiskRepository(session)
         position_repo = PositionRepository(session)
         order_repo = OrderRepository(session)
         audit_repo = AuditRepository(session)
         change_repo = MarketChangeRepository(session)
+        decision_repo = StrategyDecisionRepository(session)
         learning_svc = LearningService(session, AuditService(session))
 
         latest_signal = await signal_repo.get_latest(symbol)
+        latest_decision = (await decision_repo.get_recent_by_symbol(symbol, 1)) or []
+        latest_decision = latest_decision[0] if latest_decision else None
         candles, candle_source = await _load_candles(symbol, timeframe, 120, session, settings)
         ind_svc = IndicatorService(session, AuditService(session))
         if candles:
@@ -108,8 +108,9 @@ async def dashboard_overview(
             indicators = {}
 
         indicators_all_tf: dict[str, dict] = {}
+        candle_repo = CandleRepository(session)
         for tf in settings.timeframes:
-            tf_candles, _ = await _load_candles(symbol, tf, 120, session, settings)
+            tf_candles = await candle_repo.get_by_symbol_and_timeframe(symbol, tf, 120)
             if len(tf_candles) >= 5:
                 tf_ind = ind_svc.compute_from_ohlcv(
                     [c.close for c in tf_candles],
@@ -162,8 +163,11 @@ async def dashboard_overview(
                 k: float(v) for k, v in indicators.items() if isinstance(v, (int, float))
             },
             "indicators_all_timeframes": indicators_all_tf,
-            "signal": _signal_dict(latest_signal),
-            "news": [_news_dict(n) for n in await news_repo.get_recent(15)],
+            "signal": _signal_dict(latest_signal, latest_decision),
+            "decision_journal": [
+                _decision_dict(d) for d in await decision_repo.get_recent_by_symbol(symbol, 8)
+            ],
+            "last_cycle_decisions": _last_cycle_decisions(manager),
             "risk_events": [
                 {
                     "level": e.level,
@@ -179,7 +183,11 @@ async def dashboard_overview(
                     "side": p.side,
                     "qty": p.qty,
                     "entry_price": p.entry_price,
+                    "stop_loss": p.stop_loss,
+                    "take_profit": p.take_profit,
                     "unrealized_pnl": p.unrealized_pnl,
+                    "entry_explanation": p.entry_explanation,
+                    "exit_explanation": p.exit_explanation,
                 }
                 for p in await position_repo.get_open_positions()
             ],
@@ -223,6 +231,9 @@ async def chart_data(
     try:
         symbol = symbol.upper()
         signal_repo = SignalRepository(session)
+        decision_repo = StrategyDecisionRepository(session)
+        latest_decisions = await decision_repo.get_recent_by_symbol(symbol, 1)
+        latest_decision = latest_decisions[0] if latest_decisions else None
         candles, candle_source = await _load_candles(symbol, timeframe, limit, session, settings)
         ind_svc = IndicatorService(session, AuditService(session))
         indicators = (
@@ -236,33 +247,43 @@ async def chart_data(
             else {}
         )
         latest_signal = await signal_repo.get_latest(symbol)
+        open_pos = await PositionRepository(session).get_by_symbol(symbol)
+
+        def _norm_ts(ts: int) -> int:
+            return ts // 1000 if ts > 1_000_000_000_000 else ts
 
         series = [
             {
-                "time": c.open_time,
-                "open": c.open,
-                "high": c.high,
-                "low": c.low,
-                "close": c.close,
-                "volume": c.volume,
+                "time": _norm_ts(c.open_time),
+                "open": float(c.open),
+                "high": float(c.high),
+                "low": float(c.low),
+                "close": float(c.close),
+                "volume": float(c.volume),
             }
             for c in candles
         ]
 
-        overlays: list[dict] = []
-        for key, color in (
-            ("ema", "#60a5fa"),
-            ("sma", "#a78bfa"),
-            ("bb_upper", "#f87171"),
-            ("bb_lower", "#4ade80"),
-            ("vwap", "#fbbf24"),
-        ):
-            val = indicators.get(key)
-            if isinstance(val, (int, float)):
-                overlays.append({"name": key.upper(), "value": float(val), "color": color})
-
         trade_plan = None
-        if latest_signal and latest_signal.action in ("BUY", "SELL"):
+        trade_levels: list[dict] = []
+        level_specs: list[tuple[str, float | None, str, str]] = []
+
+        if open_pos:
+            trade_plan = {
+                "action": open_pos.side.upper(),
+                "entry": open_pos.entry_price,
+                "stop_loss": open_pos.stop_loss,
+                "take_profit": open_pos.take_profit,
+                "source": "open_position",
+                "reason": (open_pos.entry_explanation or "")[:200],
+                "explanation": open_pos.entry_explanation,
+            }
+            level_specs = [
+                ("Entry", open_pos.entry_price, "#2563eb", "solid"),
+                ("Stop Loss", open_pos.stop_loss, "#dc2626", "dashed"),
+                ("Take Profit", open_pos.take_profit, "#16a34a", "dashed"),
+            ]
+        elif latest_signal and latest_signal.action in ("BUY", "SELL"):
             trade_plan = {
                 "action": latest_signal.action,
                 "entry": latest_signal.entry_price,
@@ -270,26 +291,42 @@ async def chart_data(
                 "take_profit": latest_signal.take_profit,
                 "confidence": latest_signal.confidence,
                 "reason": latest_signal.reason,
+                "explanation": latest_decision.explanation if latest_decision else latest_signal.reason,
+                "regime": latest_decision.regime if latest_decision else None,
+                "source": "signal",
             }
-            for label, val, color in (
-                ("Entry", latest_signal.entry_price, "#3b82f6"),
-                ("Stop", latest_signal.stop_loss, "#ef4444"),
-                ("TP", latest_signal.take_profit, "#22c55e"),
-            ):
-                if val:
-                    overlays.append({"name": label, "value": float(val), "color": color})
+            level_specs = [
+                ("Entry", latest_signal.entry_price, "#2563eb", "solid"),
+                ("Stop Loss", latest_signal.stop_loss, "#dc2626", "dashed"),
+                ("Take Profit", latest_signal.take_profit, "#16a34a", "dashed"),
+            ]
+
+        for label, val, color, style in level_specs:
+            if val is not None:
+                trade_levels.append(
+                    {
+                        "name": label,
+                        "price": float(val),
+                        "color": color,
+                        "lineStyle": style,
+                    }
+                )
+
+        last_price = float(candles[-1].close) if candles else 0.0
 
         return {
             "symbol": symbol,
             "timeframe": timeframe,
             "timeframe_label": label_for_timeframe(timeframe),
+            "tradingview_symbol": f"BYBIT:{symbol}",
             "candles": series,
             "candle_source": candle_source,
-            "overlays": overlays,
-            "rsi": indicators.get("rsi"),
-            "macd": indicators.get("macd"),
-            "adx": indicators.get("adx"),
+            "last_price": last_price,
+            "trade_levels": trade_levels,
             "trade_plan": trade_plan,
+            "indicators": {
+                k: float(v) for k, v in indicators.items() if isinstance(v, (int, float))
+            },
             "market_source": "bybit" if settings.use_bybit_market_data else "mock",
         }
     except Exception as exc:
@@ -308,20 +345,16 @@ async def refresh_market(session: SessionDep, settings: SettingsDep) -> dict:
     return {"ingested": counts, "source": "bybit", "timeframes": settings.timeframes}
 
 
-@router.post("/refresh-news")
-async def refresh_news(session: SessionDep, settings: SettingsDep) -> dict:
-    svc = NewsService(session, AuditService(session), settings)
-    counts = await svc.ingest_all()
-    return {"ingested_by_provider": counts}
-
-
-def _signal_dict(signal) -> dict | None:
+def _signal_dict(signal, decision=None) -> dict | None:
     if not signal:
         return None
+    explanation = (decision.explanation if decision else None) or signal.reason
     return {
         "action": signal.action,
         "confidence": signal.confidence,
         "reason": signal.reason,
+        "explanation": explanation,
+        "regime": decision.regime if decision else None,
         "entry_price": signal.entry_price,
         "stop_loss": signal.stop_loss,
         "take_profit": signal.take_profit,
@@ -330,12 +363,30 @@ def _signal_dict(signal) -> dict | None:
     }
 
 
-def _news_dict(item) -> dict:
+def _decision_dict(decision) -> dict:
     return {
-        "id": item.id,
-        "source": item.source,
-        "title": item.title,
-        "summary": (item.summary or "")[:300],
-        "url": item.url,
-        "published_at": item.published_at.isoformat() if item.published_at else None,
+        "action": decision.action,
+        "confidence": decision.confidence,
+        "regime": decision.regime,
+        "reason": (decision.explanation or "")[:200],
+        "explanation": decision.explanation,
+        "created_at": decision.created_at.isoformat() if decision.created_at else None,
     }
+
+
+def _last_cycle_decisions(manager) -> list[dict]:
+    last = manager.last_result or {}
+    out: list[dict] = []
+    for d in last.get("decisions") or []:
+        out.append(
+            {
+                "symbol": d.get("symbol"),
+                "action": d.get("action"),
+                "reason": d.get("reason"),
+                "explanation": d.get("explanation"),
+                "risk_allowed": d.get("risk_allowed"),
+                "risk_blocks": d.get("risk_blocks"),
+            }
+        )
+    return out
+

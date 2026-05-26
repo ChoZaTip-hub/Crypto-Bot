@@ -17,17 +17,21 @@ class MeanReversionStrategy(BaseStrategy):
 
         action = SignalAction.HOLD
         confidence = 0.3
-        reason = f"rsi={rsi:.1f}"
+        reason = f"RSI={rsi:.1f}"
 
         if inputs.regime == "ranging":
             if rsi < 30 and close <= bb_lower:
                 action = SignalAction.BUY
                 confidence = 0.7
-                reason += "; oversold_bb"
+                reason += "; перепроданность у нижней полосы BB"
             elif rsi > 70 and close >= bb_upper:
                 action = SignalAction.SELL
                 confidence = 0.7
-                reason += "; overbought_bb"
+                reason += "; перекупленность у верхней полосы BB"
+            else:
+                reason += "; нет экстремума RSI/BB"
+        else:
+            reason += f"; стратегия флэта не активна (режим {inputs.regime})"
 
         stop = close - 1.5 * atr if action == SignalAction.BUY else close + 1.5 * atr if action == SignalAction.SELL else None
         tp = close + 2 * atr if action == SignalAction.BUY else close - 2 * atr if action == SignalAction.SELL else None

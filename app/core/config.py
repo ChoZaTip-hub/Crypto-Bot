@@ -12,9 +12,6 @@ from app.core.constants import (
     DEFAULT_TIMEFRAMES,
     TradingMode,
 )
-from app.core.news_sources import DEFAULT_NEWS_RSS_URLS
-
-
 def _parse_csv_list(v: Any) -> list[str]:
     """Parse comma-separated env values (pydantic-settings does not split lists by default)."""
     if v is None:
@@ -84,29 +81,13 @@ class Settings(BaseSettings):
     paper_initial_balance: float = 10_000.0
     paper_slippage_bps: float = 5.0
 
-    news_rss_urls: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: list(DEFAULT_NEWS_RSS_URLS)
-    )
-    news_rss_entries_per_feed: int = 20
-
-    # Bybit Announcements (public REST, no API key)
-    bybit_announcements_enabled: bool = True
-    bybit_announcements_locale: str = "en-US"
-    bybit_announcements_limit: int = 20
-
-    # Crypto News API aggregator (optional — requires token)
-    crypto_news_api_key: str = ""
-    crypto_news_api_base_url: str = "https://cryptonews-api.com/api/v1"
-    crypto_news_api_items_per_ticker: int = 10
-
     api_admin_token: str = ""
     bot_auto_start: bool = False
     market_poll_interval_seconds: int = 5
     use_bybit_market_data: bool = True
 
-    # 24/7 background services (news + position monitor)
+    # 24/7 background: SL/TP position monitor
     background_services_enabled: bool = True
-    news_poll_interval_seconds: int = 120
     position_monitor_interval_seconds: int = 10
 
     # Memory & learning
@@ -126,7 +107,6 @@ class Settings(BaseSettings):
         for key, parser in (
             ("symbol_whitelist", _parse_symbol_whitelist),
             ("timeframes", _parse_csv_list),
-            ("news_rss_urls", _parse_csv_list),
         ):
             if key in data:
                 data[key] = parser(data[key])

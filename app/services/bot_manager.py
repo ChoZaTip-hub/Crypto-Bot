@@ -3,6 +3,8 @@
 import asyncio
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import OperationalError
+
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.db.session import DatabaseSessionManager
@@ -73,12 +75,22 @@ class BotManager:
             await asyncio.sleep(self._settings.market_poll_interval_seconds)
 
     async def _execute_cycle(self) -> dict:
-        factory = self._db_manager.session_factory()
-        async with factory() as session:
-            orchestrator = BotOrchestrator(session, self._settings)
-            result = await orchestrator.run_pipeline()
-            await session.commit()
-        self._last_run_at = datetime.now(timezone.utc).isoformat()
-        self._last_error = None
-        self._last_result = result
-        return result
+        last_exc: Exception | None = None
+        for attempt in range(5):
+            try:
+                factory = self._db_manager.session_factory()
+                async with factory() as session:
+                    orchestrator = BotOrchestrator(session, self._settings)
+                    result = await orchestrator.run_pipeline()
+                    await session.commit()
+                self._last_run_at = datetime.now(timezone.utc).isoformat()
+                self._last_error = None
+                self._last_result = result
+                return result
+            except OperationalError as exc:
+                last_exc = exc
+                if "locked" not in str(exc).lower():
+                    raise
+                await asyncio.sleep(0.3 * (attempt + 1))
+        assert last_exc is not None
+        raise last_exc

@@ -11,8 +11,6 @@ from app.core.constants import DEFAULT_STRATEGY_VERSION, SignalAction
 class StrategyInputs:
     symbol: str
     timeframes: dict[str, dict[str, Any]]
-    sentiment_score: float = 0.0
-    sentiment_high_impact: bool = False
     regime: str = "unknown"
     memory_context: dict[str, Any] = field(default_factory=dict)
     learning_weights: dict[str, float] = field(default_factory=dict)
@@ -24,6 +22,7 @@ class StrategySignal:
     action: SignalAction
     confidence: float
     reason: str
+    explanation: str = ""
     risk_score: float = 0.0
     entry_price: float | None = None
     stop_loss: float | None = None

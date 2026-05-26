@@ -12,13 +12,13 @@
       <span class="logo">◇</span>
       <div>
         <h1>Crypto Trading Bot</h1>
-        <p class="subtitle">Paper-first · Bybit · Память · Обучение · Новости 24/7</p>
+        <p class="subtitle">TradingView · уровни входа, Stop Loss, Take Profit</p>
       </div>
     </div>
     <div class="topbar-actions">
       <span id="modeBadge" class="badge">PAPER</span>
-      <span id="newsBadge" class="badge muted">News 24/7</span>
-      <span id="marketBadge" class="badge muted">Bybit data</span>
+      <span id="monitorBadge" class="badge muted">SL/TP 24/7</span>
+      <span id="marketBadge" class="badge muted">Bybit</span>
       <span id="botStatus" class="badge off">Остановлен</span>
     </div>
   </header>
@@ -29,7 +29,7 @@
       <select id="symbolSelect"></select>
     </div>
     <div class="control-group">
-      <label>Таймфрейм (график)</label>
+      <label>Таймфрейм</label>
       <select id="timeframeSelect"></select>
     </div>
     <div class="control-buttons">
@@ -37,40 +37,78 @@
       <button id="btnStop" class="btn danger">■ Стоп</button>
       <button id="btnOnce" class="btn">↻ Один цикл</button>
       <button id="btnRefreshMarket" class="btn ghost">Загрузить свечи Bybit</button>
-      <button id="btnRefreshNews" class="btn ghost">Обновить новости</button>
     </div>
+    <p id="apiError" class="api-error" hidden></p>
     <p id="lastRun" class="hint"></p>
     <p id="backgroundStatus" class="hint"></p>
   </section>
 
   <main class="grid">
     <section class="card chart-card">
-      <h2>График TradingView (реальное время)</h2>
-      <p class="hint">Bybit spot · обновляется при смене символа / таймфрейма</p>
-      <div id="tvChartWrap" class="tv-chart-wrap">
-        <div id="tvChartContainer" class="tradingview-widget-container"></div>
+      <div class="chart-header-row">
+        <div>
+          <h2>График TradingView</h2>
+          <p id="chartStatus" class="hint">Загрузка…</p>
+        </div>
+        <a id="tvOpenLink" class="btn ghost btn-sm" href="#" target="_blank" rel="noopener">Открыть в TradingView ↗</a>
       </div>
+
+      <div id="tradeLevelsPanel" class="trade-levels-panel">
+        <div class="level-card entry"><span class="lbl">Вход (Entry)</span><span id="lvlEntry" class="val">—</span></div>
+        <div class="level-card stop"><span class="lbl">Stop Loss</span><span id="lvlStop" class="val">—</span></div>
+        <div class="level-card tp"><span class="lbl">Take Profit</span><span id="lvlTp" class="val">—</span></div>
+        <div class="level-card price"><span class="lbl">Текущая цена</span><span id="lvlPrice" class="val">—</span></div>
+      </div>
+
+      <div class="chart-stack">
+        <section class="levels-chart-section">
+          <div class="chart-subheader">
+            <h3>Свечи Bybit + уровни сделки</h3>
+            <p id="levelsChartStatus" class="hint">Загрузка…</p>
+          </div>
+          <div id="levelsChartContainer" class="levels-chart-container"></div>
+        </section>
+
+        <section class="tv-section">
+          <div class="chart-subheader">
+            <h3>TradingView — полный график и рисование</h3>
+            <p class="hint">Линии, фигуры и индикаторы — на панели слева в виджете</p>
+          </div>
+          <div class="tv-chart-host">
+            <div id="tvChartContainer" class="tradingview-widget-container"></div>
+          </div>
+        </section>
+      </div>
+
+      <p id="chartLegend" class="chart-legend"></p>
+
       <div id="indicatorRow" class="indicator-row"></div>
       <h3 class="subheading">Все таймфреймы</h3>
       <div id="multiTfPanel" class="multi-tf-panel"></div>
     </section>
 
+    <section class="card wide">
+      <h2>Почему бот так решил</h2>
+      <pre id="decisionExplanation" class="decision-explanation">Запусти «Один цикл» — здесь появится объяснение входа, выхода и режима рынка.</pre>
+    </section>
+    <section class="card wide">
+      <h2>Журнал решений</h2>
+      <ul id="decisionJournal" class="decision-journal"></ul>
+    </section>
+
     <aside class="sidebar">
       <section class="card">
         <h2>План сделки</h2>
-        <div id="tradePlan" class="trade-plan empty">Нет активного сигнала — HOLD или ждём цикл</div>
+        <div id="tradePlan" class="trade-plan empty">Нет сигнала — нажми «Один цикл»</div>
       </section>
-
       <section class="card">
         <h2>Риск</h2>
         <div id="riskBox"></div>
       </section>
-
       <section class="card">
-        <h2>Последний сигнал</h2>
+        <h2>Сигнал</h2>
         <div id="signalBox" class="signal-box"></div>
       </section>
-
       <section class="card">
         <h2>Обучение</h2>
         <div id="learningBox" class="learning-box"></div>
@@ -78,27 +116,17 @@
     </aside>
 
     <section class="card wide">
-      <h2>Изменения на графике (память бота)</h2>
+      <h2>Изменения (память)</h2>
       <ul id="changesList" class="audit-list"></ul>
     </section>
-
     <section class="card wide">
-      <h2>Новости (24/7, что видел бот)</h2>
-      <ul id="newsList" class="news-list"></ul>
-    </section>
-
-    <section class="card wide">
-      <h2>Журнал решений (audit)</h2>
+      <h2>Audit</h2>
       <ul id="auditList" class="audit-list"></ul>
     </section>
   </main>
 
-  <footer class="footer">
-    API: <a href="/docs" target="_blank">/docs</a> ·
-    Память: <a href="/api/v1/memory/changes" target="_blank">/memory</a> ·
-    Обучение: <a href="/api/v1/learning/summary" target="_blank">/learning</a>
-  </footer>
-
-  <script src="/assets/app.js"></script>
+  <footer class="footer">API: <a href="/docs" target="_blank">/docs</a></footer>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="/assets/app.js?v=8"></script>
 </body>
 </html>

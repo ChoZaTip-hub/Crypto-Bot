@@ -1,12 +1,20 @@
 """Multi-timeframe strategy orchestrator."""
 
 import uuid
+from dataclasses import dataclass, field
 
 from app.core.constants import SignalAction
 from app.strategies.base import BaseStrategy, StrategyInputs, StrategySignal
 from app.strategies.mean_reversion_strategy import MeanReversionStrategy
 from app.strategies.signal_combiner import SignalCombiner
 from app.strategies.trend_strategy import TrendStrategy
+
+
+@dataclass
+class StrategyDecisionBundle:
+    signal: StrategySignal
+    sub_signals: list[StrategySignal] = field(default_factory=list)
+    active_strategies: list[str] = field(default_factory=list)
 
 
 class MultiTimeframeStrategy(BaseStrategy):
@@ -27,25 +35,29 @@ class MultiTimeframeStrategy(BaseStrategy):
             return "ranging"
         return "unknown"
 
-    async def decide(self, inputs: StrategyInputs) -> StrategySignal:
+    async def decide_detailed(self, inputs: StrategyInputs) -> StrategyDecisionBundle:
         inputs.regime = self._detect_regime(inputs)
         correlation_id = str(uuid.uuid4())
         sub_signals: list[StrategySignal] = []
+        active: list[str] = []
 
         if inputs.regime == "trending":
             sig = await self._trend.decide(inputs)
             sig.correlation_id = correlation_id
             sub_signals.append(sig)
+            active.append("trend")
         elif inputs.regime == "ranging":
             sig = await self._mean_rev.decide(inputs)
             sig.correlation_id = correlation_id
             sub_signals.append(sig)
+            active.append("mean_reversion")
         else:
             trend_sig = await self._trend.decide(inputs)
             mr_sig = await self._mean_rev.decide(inputs)
             trend_sig.correlation_id = correlation_id
             mr_sig.correlation_id = correlation_id
             sub_signals.extend([trend_sig, mr_sig])
+            active.extend(["trend", "mean_reversion"])
 
         weights = dict(inputs.learning_weights)
         if inputs.regime == "trending":
@@ -56,14 +68,18 @@ class MultiTimeframeStrategy(BaseStrategy):
         combined = self._combiner.combine(sub_signals, weights=weights)
         combined.correlation_id = correlation_id
         combined.timeframe_confirmations = list(inputs.timeframes.keys())
+        combined.strategy_name = self.name
 
         recent_changes = inputs.memory_context.get("recent_changes") or []
         if recent_changes:
-            combined.reason += f"; memory_events={len(recent_changes)}"
+            combined.reason += f"; память: {len(recent_changes)} изменений"
 
-        if inputs.sentiment_high_impact:
-            combined.action = SignalAction.HOLD
-            combined.reason += "; blocked_by_high_impact_sentiment"
-            combined.confidence *= 0.5
+        return StrategyDecisionBundle(
+            signal=combined,
+            sub_signals=sub_signals,
+            active_strategies=active,
+        )
 
-        return combined
+    async def decide(self, inputs: StrategyInputs) -> StrategySignal:
+        bundle = await self.decide_detailed(inputs)
+        return bundle.signal
