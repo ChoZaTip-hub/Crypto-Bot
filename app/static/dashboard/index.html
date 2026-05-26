@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Crypto Trading Bot — Панель управления</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◇</span>
+      <div>
+        <h1>Crypto Trading Bot</h1>
+        <p class="subtitle">Paper-first · Bybit spot · Объяснимые решения</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span id="modeBadge" class="badge">PAPER</span>
+      <span id="marketBadge" class="badge muted">Bybit data</span>
+      <span id="botStatus" class="badge off">Остановлен</span>
+    </div>
+  </header>
+
+  <section class="controls card">
+    <div class="control-group">
+      <label>Символ</label>
+      <select id="symbolSelect"></select>
+    </div>
+    <div class="control-group">
+      <label>Таймфрейм</label>
+      <select id="timeframeSelect">
+        <option value="1">1m</option>
+        <option value="5" selected>5m</option>
+        <option value="60">1h</option>
+      </select>
+    </div>
+    <div class="control-buttons">
+      <button id="btnStart" class="btn primary">▶ Старт бота</button>
+      <button id="btnStop" class="btn danger">■ Стоп</button>
+      <button id="btnOnce" class="btn">↻ Один цикл</button>
+      <button id="btnRefreshMarket" class="btn ghost">Загрузить свечи Bybit</button>
+      <button id="btnRefreshNews" class="btn ghost">Обновить новости</button>
+    </div>
+    <p id="lastRun" class="hint"></p>
+  </section>
+
+  <main class="grid">
+    <section class="card chart-card">
+      <h2>График и уровни</h2>
+      <p class="hint">Свечи из Bybit · линии = индикаторы и план сделки (entry / SL / TP)</p>
+      <div id="chart" class="chart"></div>
+      <div id="indicatorRow" class="indicator-row"></div>
+    </section>
+
+    <aside class="sidebar">
+      <section class="card">
+        <h2>План сделки</h2>
+        <div id="tradePlan" class="trade-plan empty">Нет активного сигнала — HOLD или ждём цикл</div>
+      </section>
+
+      <section class="card">
+        <h2>Риск</h2>
+        <div id="riskBox"></div>
+      </section>
+
+      <section class="card">
+        <h2>Последний сигнал</h2>
+        <div id="signalBox" class="signal-box"></div>
+      </section>
+    </aside>
+
+    <section class="card wide">
+      <h2>Новости (что видел бот)</h2>
+      <ul id="newsList" class="news-list"></ul>
+    </section>
+
+    <section class="card wide">
+      <h2>Журнал решений (audit)</h2>
+      <ul id="auditList" class="audit-list"></ul>
+    </section>
+  </main>
+
+  <footer class="footer">
+    API: <a href="/docs" target="_blank">/docs</a> ·
+    Режим live только через <code>LIVE_TRADING_ENABLED=true</code>
+  </footer>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>

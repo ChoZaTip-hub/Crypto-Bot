@@ -1,0 +1,187 @@
+:root {
+  --bg: #0b0f14;
+  --card: #141b24;
+  --border: #243044;
+  --text: #e8eef7;
+  --muted: #8b9cb3;
+  --accent: #3b82f6;
+  --green: #22c55e;
+  --red: #ef4444;
+  --amber: #f59e0b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #121a24 0%, var(--bg) 100%);
+}
+
+.brand { display: flex; gap: 0.75rem; align-items: center; }
+.logo {
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  background: var(--accent);
+  border-radius: 10px;
+  font-weight: bold;
+}
+h1 { font-size: 1.15rem; font-weight: 600; }
+.subtitle { font-size: 0.8rem; color: var(--muted); }
+
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-left: 0.35rem;
+  background: #1e3a5f;
+  color: #93c5fd;
+}
+.badge.muted { background: #1f2937; color: var(--muted); }
+.badge.on { background: #14532d; color: #86efac; }
+.badge.off { background: #3f1d1d; color: #fca5a5; }
+.badge.live { background: #7c2d12; color: #fdba74; }
+
+.controls {
+  margin: 1rem 1.5rem 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
+}
+
+.control-group label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  min-width: 120px;
+}
+
+.control-buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+.btn {
+  border: none;
+  padding: 0.5rem 0.9rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+  background: var(--border);
+  color: var(--text);
+}
+.btn:hover { filter: brightness(1.1); }
+.btn.primary { background: var(--accent); }
+.btn.danger { background: var(--red); }
+.btn.ghost { background: transparent; border: 1px solid var(--border); }
+
+.hint { font-size: 0.8rem; color: var(--muted); margin-top: 0.35rem; }
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 1rem;
+  padding: 1rem 1.5rem 2rem;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+}
+.card h2 { font-size: 0.95rem; margin-bottom: 0.5rem; }
+.card.wide { grid-column: 1 / -1; }
+
+.chart { height: 420px; width: 100%; }
+.indicator-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.ind-chip {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.trade-plan { font-size: 0.9rem; }
+.trade-plan.empty { color: var(--muted); }
+.trade-plan .action {
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+.trade-plan .action.buy { color: var(--green); }
+.trade-plan .action.sell { color: var(--red); }
+.trade-plan dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+  font-size: 0.85rem;
+}
+.trade-plan dt { color: var(--muted); }
+.reason {
+  margin-top: 0.75rem;
+  padding: 0.5rem;
+  background: var(--bg);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.news-list, .audit-list {
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.news-list li, .audit-list li {
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.news-list a { color: var(--accent); text-decoration: none; }
+.news-list .meta { color: var(--muted); font-size: 0.75rem; }
+
+.signal-box { font-size: 0.85rem; }
+.risk-ok { color: var(--green); }
+.risk-block { color: var(--red); }
+
+.footer {
+  text-align: center;
+  padding: 1rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  border-top: 1px solid var(--border);
+}
+.footer a { color: var(--accent); }
+code { background: var(--card); padding: 0.1rem 0.3rem; border-radius: 4px; }
+
+@media (max-width: 960px) {
+  .grid { grid-template-columns: 1fr; }
+  .chart { height: 300px; }
+}

@@ -1,0 +1,64 @@
+"""FastAPI application entrypoint."""
+
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import AsyncGenerator
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+from app.api.router import router
+from app.core.config import get_settings
+from app.core.logging import setup_logging
+from app.db.session import DatabaseSessionManager
+from app.services.bot_manager import BotManager
+
+STATIC_DIR = Path(__file__).resolve().parent / "static" / "dashboard"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    settings = get_settings()
+    db_manager = DatabaseSessionManager(settings.database_url, echo=settings.debug)
+    db_manager.init_engine()
+    app.state.db_manager = db_manager
+    app.state.bot_manager = BotManager(db_manager, settings)
+    if settings.bot_auto_start:
+        await app.state.bot_manager.start()
+    yield
+    await app.state.bot_manager.stop()
+    await db_manager.close()
+
+
+def create_app() -> FastAPI:
+    setup_logging()
+    settings = get_settings()
+    app = FastAPI(
+        title=settings.app_name,
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url="/docs",
+        redoc_url="/redoc",
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(router)
+
+    if STATIC_DIR.is_dir():
+        app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="dashboard-assets")
+
+        @app.get("/")
+        async def dashboard_page() -> FileResponse:
+            return FileResponse(STATIC_DIR / "index.html")
+
+    return app
+
+
+app = create_app()
