@@ -1,18 +1,40 @@
 const API = "";
 
 let chart, candleSeries, lineSeries = [];
+const TF_LABELS = {
+  "1": "1m",
+  "3": "3m",
+  "5": "5m",
+  "15": "15m",
+  "30": "30m",
+  "60": "1h",
+  "240": "4h",
+  "D": "1D",
+  "W": "1W",
+  "M": "1MN",
+};
 
 async function api(path, options = {}) {
   const res = await fetch(API + path, options);
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || res.statusText);
+    let detail = res.statusText;
+    try {
+      const j = await res.json();
+      detail = j.detail || JSON.stringify(j);
+    } catch {
+      detail = await res.text();
+    }
+    throw new Error(detail);
   }
   return res.json();
 }
 
 function $(id) {
   return document.getElementById(id);
+}
+
+function tfLabel(code) {
+  return TF_LABELS[code] || code;
 }
 
 function initChart() {
@@ -67,6 +89,30 @@ function renderIndicators(indicators) {
     chip.className = "ind-chip";
     chip.textContent = `${k.toUpperCase()}: ${Number(v).toFixed(4)}`;
     row.appendChild(chip);
+  });
+}
+
+function renderMultiTf(allTf, labels) {
+  const panel = $("multiTfPanel");
+  panel.innerHTML = "";
+  const keys = Object.keys(allTf || {});
+  if (!keys.length) {
+    panel.innerHTML = '<p class="hint">Нет данных — нажми «Загрузить свечи Bybit»</p>';
+    return;
+  }
+  keys.forEach((tf) => {
+    const ind = allTf[tf];
+    const card = document.createElement("div");
+    card.className = "tf-card";
+    const title = (labels && labels[tf]) || tfLabel(tf);
+    card.innerHTML = `<h4>${title}</h4><dl>
+      <dt>Цена</dt><dd>${fmt(ind.close)}</dd>
+      <dt>RSI</dt><dd>${fmt(ind.rsi)}</dd>
+      <dt>ADX</dt><dd>${fmt(ind.adx)}</dd>
+      <dt>EMA</dt><dd>${fmt(ind.ema)}</dd>
+      <dt>ATR</dt><dd>${fmt(ind.atr)}</dd>
+    </dl>`;
+    panel.appendChild(card);
   });
 }
 
@@ -140,17 +186,32 @@ function renderAudit(audit) {
   });
 }
 
-function updateBotBadges(bot) {
+function updateBotBadges(bot, candleSource) {
   const st = $("botStatus");
   st.textContent = bot.running ? "Работает" : "Остановлен";
   st.className = "badge " + (bot.running ? "on" : "off");
   const mode = $("modeBadge");
   mode.textContent = bot.trading_mode.toUpperCase();
   mode.className = "badge " + (bot.live_enabled ? "live" : "");
-  $("marketBadge").textContent = bot.market_source === "bybit" ? "Bybit data" : "Mock data";
+  $("marketBadge").textContent =
+    bot.market_source === "bybit"
+      ? `Bybit · ${candleSource || "data"}`
+      : "Mock data";
   $("lastRun").textContent = bot.last_run_at
     ? `Последний цикл: ${bot.last_run_at}${bot.last_error ? " · Ошибка: " + bot.last_error : ""}`
     : "";
+}
+
+function populateTimeframes(timeframes, labels) {
+  const sel = $("timeframeSelect");
+  sel.innerHTML = "";
+  (timeframes || ["1", "5", "60"]).forEach((tf, i) => {
+    const opt = document.createElement("option");
+    opt.value = tf;
+    opt.textContent = (labels && labels[tf]) || tfLabel(tf);
+    if (i === 1 || tf === "5") opt.selected = true;
+    sel.appendChild(opt);
+  });
 }
 
 async function loadOverview() {
@@ -161,8 +222,9 @@ async function loadOverview() {
     api(`/api/v1/dashboard/chart?symbol=${symbol}&timeframe=${timeframe}`),
   ]);
 
-  updateBotBadges(overview.bot);
+  updateBotBadges(overview.bot, overview.candle_source || chartData.candle_source);
   renderIndicators(overview.indicators);
+  renderMultiTf(overview.indicators_all_timeframes, overview.bot.timeframe_labels);
   renderTradePlan(chartData.trade_plan, overview.signal);
   renderSignal(overview.signal);
   renderRisk(overview.risk_events, overview.bot);
@@ -173,6 +235,9 @@ async function loadOverview() {
     candleSeries.setData(chartData.candles);
     drawOverlays(chartData.overlays || [], chartData.candles);
     chart.timeScale().fitContent();
+  } else {
+    candleSeries.setData([]);
+    clearLines();
   }
 }
 
@@ -186,7 +251,7 @@ async function refreshAll() {
 }
 
 function fmt(v) {
-  return v == null ? "—" : Number(v).toFixed(2);
+  return v == null || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(2);
 }
 
 function escapeHtml(s) {
@@ -195,18 +260,24 @@ function escapeHtml(s) {
 
 async function init() {
   initChart();
-  const status = await api("/api/v1/bot/status");
+  const [status, meta] = await Promise.all([
+    api("/api/v1/bot/status"),
+    api("/api/v1/dashboard/meta"),
+  ]);
+
   const select = $("symbolSelect");
-  (status.symbols || ["BTCUSDT"]).forEach((s) => {
+  (status.symbols || meta.symbols || ["BTCUSDT"]).forEach((s) => {
     const opt = document.createElement("option");
     opt.value = s;
     opt.textContent = s;
     select.appendChild(opt);
   });
-  (status.timeframes || ["5"]).forEach((tf) => {
-    const opt = $("timeframeSelect").querySelector(`option[value="${tf}"]`);
-    if (opt) opt.selected = true;
-  });
+
+  const tfs = status.timeframes || meta.timeframes.map((t) => t.code);
+  const labels = status.timeframe_labels || Object.fromEntries(
+    (meta.timeframes || []).map((t) => [t.code, t.label])
+  );
+  populateTimeframes(tfs, labels);
 
   $("symbolSelect").addEventListener("change", refreshAll);
   $("timeframeSelect").addEventListener("change", refreshAll);
@@ -221,13 +292,22 @@ async function init() {
   };
   $("btnOnce").onclick = async () => {
     $("btnOnce").disabled = true;
-    await api("/api/v1/bot/run-once", { method: "POST" });
-    await refreshAll();
-    $("btnOnce").disabled = false;
+    try {
+      await api("/api/v1/bot/run-once", { method: "POST" });
+      await refreshAll();
+    } finally {
+      $("btnOnce").disabled = false;
+    }
   };
   $("btnRefreshMarket").onclick = async () => {
-    await api("/api/v1/dashboard/refresh-market", { method: "POST" });
-    await refreshAll();
+    $("btnRefreshMarket").disabled = true;
+    try {
+      const r = await api("/api/v1/dashboard/refresh-market", { method: "POST" });
+      alert(`Свечи загружены для ТФ: ${(r.timeframes || []).join(", ")}`);
+      await refreshAll();
+    } finally {
+      $("btnRefreshMarket").disabled = false;
+    }
   };
   $("btnRefreshNews").onclick = async () => {
     await api("/api/v1/dashboard/refresh-news", { method: "POST" });

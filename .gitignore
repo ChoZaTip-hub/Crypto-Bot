@@ -12,3 +12,5 @@ dist/
 .coverage
 htmlcov/
 pgdata/
+data/
+*.db

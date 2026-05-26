@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps import BotManagerDep, SettingsDep
 from app.core.security import verify_admin_token
+from app.core.timeframes import label_for_timeframe
 from app.schemas.config import BotConfigSchema, BotConfigUpdateSchema
 
 router = APIRouter(prefix="/bot", tags=["bot"])
@@ -20,6 +21,7 @@ async def bot_status(manager: BotManagerDep, settings: SettingsDep) -> dict:
         "market_data_source": "bybit" if settings.use_bybit_market_data else "mock",
         "symbols": settings.symbol_whitelist,
         "timeframes": settings.timeframes,
+        "timeframe_labels": {tf: label_for_timeframe(tf) for tf in settings.timeframes},
     }
 
 

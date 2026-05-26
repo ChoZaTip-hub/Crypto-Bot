@@ -24,18 +24,15 @@ class IndicatorService:
         self._indicator_repo = IndicatorRepository(session)
         self._audit = audit
 
-    async def compute_for_symbol(
-        self, symbol: str, timeframe: str
+    def compute_from_ohlcv(
+        self,
+        closes: list[float],
+        highs: list[float],
+        lows: list[float],
+        volumes: list[float],
     ) -> dict[str, float | dict[str, float]]:
-        candles = await self._candle_repo.get_by_symbol_and_timeframe(symbol, timeframe)
-        if len(candles) < 5:
+        if len(closes) < 5:
             return {}
-        closes = [c.close for c in candles]
-        highs = [c.high for c in candles]
-        lows = [c.low for c in candles]
-        volumes = [c.volume for c in candles]
-        open_time = candles[-1].open_time
-
         indicators = {
             "sma": SMAIndicator(20).calculate(closes),
             "ema": EMAIndicator(20).calculate(closes),
@@ -65,7 +62,21 @@ class IndicatorService:
         if isinstance(macd, dict):
             result["macd"] = macd["macd"]
             result["macd_signal"] = macd["signal"]
+        return result
 
+    async def compute_for_symbol(
+        self, symbol: str, timeframe: str
+    ) -> dict[str, float | dict[str, float]]:
+        candles = await self._candle_repo.get_by_symbol_and_timeframe(symbol, timeframe)
+        if len(candles) < 5:
+            return {}
+        result = self.compute_from_ohlcv(
+            [c.close for c in candles],
+            [c.high for c in candles],
+            [c.low for c in candles],
+            [c.volume for c in candles],
+        )
+        open_time = candles[-1].open_time
         values_to_save = []
         for name, val in result.items():
             if isinstance(val, (int, float)):

@@ -39,20 +39,38 @@ class CandleRepository(BaseRepository[Candle]):
     async def bulk_upsert(self, candles: list[dict]) -> None:
         if not candles:
             return
-        stmt = pg_insert(Candle).values(candles)
-        stmt = stmt.on_conflict_do_update(
-            constraint="uq_candle",
-            set_={
-                "open": stmt.excluded.open,
-                "high": stmt.excluded.high,
-                "low": stmt.excluded.low,
-                "close": stmt.excluded.close,
-                "volume": stmt.excluded.volume,
-                "turnover": stmt.excluded.turnover,
-                "close_time": stmt.excluded.close_time,
-            },
-        )
-        await self._session.execute(stmt)
+        bind = self._session.get_bind()
+        dialect = bind.dialect.name if bind is not None else "postgresql"
+
+        if dialect == "postgresql":
+            stmt = pg_insert(Candle).values(candles)
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_candle",
+                set_={
+                    "open": stmt.excluded.open,
+                    "high": stmt.excluded.high,
+                    "low": stmt.excluded.low,
+                    "close": stmt.excluded.close,
+                    "volume": stmt.excluded.volume,
+                    "turnover": stmt.excluded.turnover,
+                    "close_time": stmt.excluded.close_time,
+                },
+            )
+            await self._session.execute(stmt)
+        else:
+            for row in candles:
+                stmt = select(Candle).where(
+                    Candle.symbol == row["symbol"],
+                    Candle.timeframe == row["timeframe"],
+                    Candle.open_time == row["open_time"],
+                )
+                result = await self._session.execute(stmt)
+                existing = result.scalar_one_or_none()
+                if existing:
+                    for key in ("open", "high", "low", "close", "volume", "turnover", "close_time"):
+                        setattr(existing, key, row[key])
+                else:
+                    self._session.add(Candle(**row))
         await self._session.flush()
 
     async def get_range(

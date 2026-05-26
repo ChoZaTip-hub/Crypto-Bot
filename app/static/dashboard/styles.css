@@ -112,6 +112,31 @@ select {
   padding: 1rem;
 }
 .card h2 { font-size: 0.95rem; margin-bottom: 0.5rem; }
+.subheading {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 1rem 0 0.5rem;
+  font-weight: 600;
+}
+.multi-tf-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+.tf-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem;
+  font-size: 0.8rem;
+}
+.tf-card h4 { font-size: 0.85rem; margin-bottom: 0.35rem; color: var(--accent); }
+.tf-card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.5rem;
+}
+.tf-card dt { color: var(--muted); }
 .card.wide { grid-column: 1 / -1; }
 
 .chart { height: 420px; width: 100%; }

@@ -60,7 +60,8 @@ class Settings(BaseSettings):
     bybit_api_secret: str = ""
     bybit_category: str = BYBIT_CATEGORY_SPOT
 
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/trading_bot"
+    # SQLite by default for local dev (no Docker). Use Postgres in production.
+    database_url: str = "sqlite+aiosqlite:///./data/trading_bot.db"
     redis_url: str = "redis://localhost:6379/0"
 
     symbol_whitelist: Annotated[list[str], NoDecode] = Field(

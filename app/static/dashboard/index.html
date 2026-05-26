@@ -29,12 +29,8 @@
       <select id="symbolSelect"></select>
     </div>
     <div class="control-group">
-      <label>Таймфрейм</label>
-      <select id="timeframeSelect">
-        <option value="1">1m</option>
-        <option value="5" selected>5m</option>
-        <option value="60">1h</option>
-      </select>
+      <label>Таймфрейм (график)</label>
+      <select id="timeframeSelect"></select>
     </div>
     <div class="control-buttons">
       <button id="btnStart" class="btn primary">▶ Старт бота</button>
@@ -52,6 +48,8 @@
       <p class="hint">Свечи из Bybit · линии = индикаторы и план сделки (entry / SL / TP)</p>
       <div id="chart" class="chart"></div>
       <div id="indicatorRow" class="indicator-row"></div>
+      <h3 class="subheading">Все таймфреймы</h3>
+      <div id="multiTfPanel" class="multi-tf-panel"></div>
     </section>
 
     <aside class="sidebar">

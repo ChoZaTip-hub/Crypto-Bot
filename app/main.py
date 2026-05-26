@@ -11,18 +11,32 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.router import router
 from app.core.config import get_settings
-from app.core.logging import setup_logging
+from app.core.logging import get_logger, setup_logging
+from app.db.init_db import DatabaseInitializer
 from app.db.session import DatabaseSessionManager
 from app.services.bot_manager import BotManager
 
 STATIC_DIR = Path(__file__).resolve().parent / "static" / "dashboard"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
+    if settings.database_url.startswith("sqlite"):
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
     db_manager = DatabaseSessionManager(settings.database_url, echo=settings.debug)
     db_manager.init_engine()
+    try:
+        await DatabaseInitializer(db_manager.engine).create_all()
+    except OSError as exc:
+        logger.error("database_connection_failed", url=settings.database_url, error=str(exc))
+        raise RuntimeError(
+            "Cannot connect to database. "
+            "For local dev use DATABASE_URL=sqlite+aiosqlite:///./data/trading_bot.db "
+            "or start Postgres: docker compose -f docker/docker-compose.yml up -d postgres"
+        ) from exc
     app.state.db_manager = db_manager
     app.state.bot_manager = BotManager(db_manager, settings)
     if settings.bot_auto_start:

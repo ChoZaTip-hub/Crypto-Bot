@@ -14,8 +14,9 @@ DEFAULT_SYMBOL_WHITELIST: tuple[str, ...] = (
     "XRPUSDT",
 )
 
-# Multi-timeframe analysis (Bybit interval codes: 1, 5, 60 minutes)
-DEFAULT_TIMEFRAMES: tuple[str, ...] = ("1", "5", "60")
+# Multi-timeframe analysis (Bybit kline interval codes)
+# MVP needs: M1, M5, M15, M30, H1, H4, D1, W1, MN
+DEFAULT_TIMEFRAMES: tuple[str, ...] = ("1", "5", "15", "30", "60", "240", "D", "W", "M")
 
 # Strategy versioning
 DEFAULT_STRATEGY_VERSION: str = "multi_tf_v1"
