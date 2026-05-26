@@ -104,6 +104,19 @@ class Settings(BaseSettings):
     market_poll_interval_seconds: int = 5
     use_bybit_market_data: bool = True
 
+    # 24/7 background services (news + position monitor)
+    background_services_enabled: bool = True
+    news_poll_interval_seconds: int = 120
+    position_monitor_interval_seconds: int = 10
+
+    # Memory & learning
+    memory_enabled: bool = True
+    learning_enabled: bool = True
+
+    # Live: attach exchange SL/TP on entry; background monitor closes via market order
+    live_place_exchange_sl_tp: bool = True
+    live_close_sl_tp_on_exchange: bool = True
+
     @model_validator(mode="before")
     @classmethod
     def parse_comma_separated_lists(cls, data: Any) -> Any:

@@ -67,6 +67,24 @@ curl http://localhost:8000/api/v1/health
 | Paper (default) | `TRADING_MODE=paper` |
 | Live | `TRADING_MODE=live` **and** `LIVE_TRADING_ENABLED=true` |
 
+### Live trading (real orders on Bybit)
+
+1. Create API keys on [Bybit](https://www.bybit.com) (or [testnet](https://testnet.bybit.com)) with **Spot Trade** only (no withdraw).
+2. In `.env`:
+
+```env
+TRADING_MODE=live
+LIVE_TRADING_ENABLED=true
+BYBIT_TESTNET=true          # false for mainnet
+BYBIT_API_KEY=...
+BYBIT_API_SECRET=...
+BOT_AUTO_START=true         # or POST /api/v1/bot/start
+```
+
+3. **SL/TP on exchange** (at entry): `LIVE_PLACE_EXCHANGE_SL_TP=true` sends `stopLoss` / `takeProfit` with the buy order.
+4. **24/7 monitor** (`POSITION_MONITOR_INTERVAL_SECONDS=10`): if price hits SL/TP, bot places a **market close** on Bybit (`LIVE_CLOSE_SL_TP_ON_EXCHANGE=true`). Works even when the trading loop is stopped.
+5. Verify: `curl http://localhost:8000/api/v1/health` → `"live_enabled": true`.
+
 ## API Endpoints
 
 | Endpoint | Description |

@@ -47,9 +47,19 @@ class MultiTimeframeStrategy(BaseStrategy):
             mr_sig.correlation_id = correlation_id
             sub_signals.extend([trend_sig, mr_sig])
 
-        combined = self._combiner.combine(sub_signals)
+        weights = dict(inputs.learning_weights)
+        if inputs.regime == "trending":
+            weights.setdefault("trend", weights.get("trend", 1.2))
+        elif inputs.regime == "ranging":
+            weights.setdefault("mean_reversion", weights.get("mean_reversion", 1.2))
+
+        combined = self._combiner.combine(sub_signals, weights=weights)
         combined.correlation_id = correlation_id
         combined.timeframe_confirmations = list(inputs.timeframes.keys())
+
+        recent_changes = inputs.memory_context.get("recent_changes") or []
+        if recent_changes:
+            combined.reason += f"; memory_events={len(recent_changes)}"
 
         if inputs.sentiment_high_impact:
             combined.action = SignalAction.HOLD

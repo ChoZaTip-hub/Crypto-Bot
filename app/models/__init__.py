@@ -13,6 +13,10 @@ from app.models.risk_event import RiskEvent
 from app.models.sentiment import SentimentScore
 from app.models.signal import Signal
 from app.models.strategy_decision import StrategyDecision
+from app.models.market_snapshot import MarketSnapshot
+from app.models.market_change import MarketChange
+from app.models.learning_outcome import LearningOutcome
+from app.models.strategy_weight import StrategyWeight
 
 __all__ = [
     "AuditEvent",
@@ -29,4 +33,8 @@ __all__ = [
     "Signal",
     "StrategyDecision",
     "TradeOrder",
+    "MarketSnapshot",
+    "MarketChange",
+    "LearningOutcome",
+    "StrategyWeight",
 ]

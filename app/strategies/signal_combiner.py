@@ -5,7 +5,12 @@ from app.strategies.base import StrategySignal
 
 
 class SignalCombiner:
-    def combine(self, signals: list[StrategySignal]) -> StrategySignal:
+    def combine(
+        self,
+        signals: list[StrategySignal],
+        weights: dict[str, float] | None = None,
+    ) -> StrategySignal:
+        weights = weights or {}
         if not signals:
             return StrategySignal(
                 symbol="",
@@ -13,18 +18,24 @@ class SignalCombiner:
                 confidence=0.0,
                 reason="no_signals",
             )
-        buys = sum(1 for s in signals if s.action == SignalAction.BUY)
-        sells = sum(1 for s in signals if s.action == SignalAction.SELL)
+        def _w(sig: StrategySignal) -> float:
+            name = getattr(sig, "strategy_name", "combined") or "combined"
+            return weights.get(name, weights.get("combined", 1.0))
+
+        buy_score = sum(_w(s) * s.confidence for s in signals if s.action == SignalAction.BUY)
+        sell_score = sum(_w(s) * s.confidence for s in signals if s.action == SignalAction.SELL)
         base = signals[0]
-        if buys > sells and buys >= 2:
+        ml_bias = weights.get("ml_confidence_bias", 0.0)
+        if buy_score > sell_score and buy_score >= 0.5:
             action = SignalAction.BUY
-            conf = min(1.0, sum(s.confidence for s in signals if s.action == SignalAction.BUY) / buys)
-        elif sells > buys and sells >= 2:
+            conf = min(1.0, buy_score / max(1, sum(1 for s in signals if s.action == SignalAction.BUY)))
+        elif sell_score > buy_score and sell_score >= 0.5:
             action = SignalAction.SELL
-            conf = min(1.0, sum(s.confidence for s in signals if s.action == SignalAction.SELL) / sells)
+            conf = min(1.0, sell_score / max(1, sum(1 for s in signals if s.action == SignalAction.SELL)))
         else:
             action = SignalAction.HOLD
             conf = 0.3
+        conf = max(0.0, min(1.0, conf + ml_bias))
         return StrategySignal(
             symbol=base.symbol,
             action=action,

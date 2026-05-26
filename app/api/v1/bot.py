@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import BotManagerDep, SettingsDep
+from app.api.deps import BackgroundManagerDep, BotManagerDep, SettingsDep
 from app.core.security import verify_admin_token
 from app.core.timeframes import label_for_timeframe
 from app.schemas.config import BotConfigSchema, BotConfigUpdateSchema
@@ -11,7 +11,11 @@ router = APIRouter(prefix="/bot", tags=["bot"])
 
 
 @router.get("/status")
-async def bot_status(manager: BotManagerDep, settings: SettingsDep) -> dict:
+async def bot_status(
+    manager: BotManagerDep,
+    background: BackgroundManagerDep,
+    settings: SettingsDep,
+) -> dict:
     return {
         "running": manager.is_running,
         "last_run_at": manager.last_run_at,
@@ -22,6 +26,9 @@ async def bot_status(manager: BotManagerDep, settings: SettingsDep) -> dict:
         "symbols": settings.symbol_whitelist,
         "timeframes": settings.timeframes,
         "timeframe_labels": {tf: label_for_timeframe(tf) for tf in settings.timeframes},
+        "background": background.status,
+        "memory_enabled": settings.memory_enabled,
+        "learning_enabled": settings.learning_enabled,
     }
 
 

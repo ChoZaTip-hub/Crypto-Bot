@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.api.deps import BotManagerDep, SessionDep, SettingsDep
+from app.api.deps import BackgroundManagerDep, BotManagerDep, SessionDep, SettingsDep
 from app.core.logging import get_logger
 from app.core.timeframes import BYBIT_TIMEFRAME_LABELS, label_for_timeframe
 from app.db.repositories.audit_repo import AuditRepository
@@ -11,7 +11,9 @@ from app.db.repositories.news_repo import NewsRepository
 from app.db.repositories.order_repo import OrderRepository
 from app.db.repositories.position_repo import PositionRepository
 from app.db.repositories.risk_repo import RiskRepository
+from app.db.repositories.market_change_repo import MarketChangeRepository
 from app.db.repositories.signal_repo import SignalRepository
+from app.services.learning_service import LearningService
 from app.exchanges.bybit_client import BybitClient
 from app.exchanges.exchange_types import CandleData
 from app.services.audit_service import AuditService
@@ -77,6 +79,7 @@ async def dashboard_overview(
     session: SessionDep,
     settings: SettingsDep,
     manager: BotManagerDep,
+    background: BackgroundManagerDep,
     symbol: str = Query("BTCUSDT"),
     timeframe: str = Query("5"),
 ) -> dict:
@@ -88,6 +91,8 @@ async def dashboard_overview(
         position_repo = PositionRepository(session)
         order_repo = OrderRepository(session)
         audit_repo = AuditRepository(session)
+        change_repo = MarketChangeRepository(session)
+        learning_svc = LearningService(session, AuditService(session))
 
         latest_signal = await signal_repo.get_latest(symbol)
         candles, candle_source = await _load_candles(symbol, timeframe, 120, session, settings)
@@ -130,7 +135,25 @@ async def dashboard_overview(
                     tf: label_for_timeframe(tf) for tf in settings.timeframes
                 },
                 "kill_switch": settings.kill_switch,
+                "background": background.status,
+                "memory_enabled": settings.memory_enabled,
+                "learning_enabled": settings.learning_enabled,
             },
+            "tradingview": {
+                "symbol": f"BYBIT:{symbol}",
+                "interval": timeframe,
+            },
+            "market_changes": [
+                {
+                    "change_type": c.change_type,
+                    "message": c.message,
+                    "severity": c.severity,
+                    "timeframe": c.timeframe,
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                }
+                for c in await change_repo.get_recent(symbol=symbol, limit=12)
+            ],
+            "learning": await learning_svc.get_summary(),
             "symbol": symbol,
             "timeframe": timeframe,
             "candle_source": candle_source,

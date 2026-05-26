@@ -70,10 +70,62 @@ class BybitRestClient:
     async def place_order(self, params: dict[str, Any]) -> dict[str, Any]:
         try:
             client = self._get_client()
-            resp = client.place_order(category=self._settings.bybit_category, **params)
+            resp = await asyncio.to_thread(
+                client.place_order,
+                category=self._settings.bybit_category,
+                **params,
+            )
             if resp.get("retCode") != 0:
                 raise ExchangeError(f"Order failed: {resp.get('retMsg')}", details={"response": resp})
             return resp.get("result", {})
+        except ExchangeError:
+            raise
+        except Exception as exc:
+            raise ExchangeError(str(exc)) from exc
+
+    async def get_order(self, symbol: str, order_id: str) -> dict[str, Any]:
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(
+                client.get_open_orders,
+                category=self._settings.bybit_category,
+                symbol=symbol,
+                orderId=order_id,
+            )
+            if resp.get("retCode") != 0:
+                resp = await asyncio.to_thread(
+                    client.get_order_history,
+                    category=self._settings.bybit_category,
+                    symbol=symbol,
+                    orderId=order_id,
+                )
+            if resp.get("retCode") != 0:
+                raise ExchangeError(f"Get order failed: {resp.get('retMsg')}")
+            items = resp.get("result", {}).get("list", [])
+            return items[0] if items else {}
+        except ExchangeError:
+            raise
+        except Exception as exc:
+            raise ExchangeError(str(exc)) from exc
+
+    async def get_last_price(self, symbol: str) -> float:
+        """Latest traded price for spot symbol."""
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(
+                client.get_tickers,
+                category=self._settings.bybit_category,
+                symbol=symbol,
+            )
+            if resp.get("retCode") != 0:
+                raise ExchangeError(
+                    f"Ticker error: {resp.get('retMsg')}",
+                    details={"response": resp},
+                )
+            items = resp.get("result", {}).get("list", [])
+            if not items:
+                raise ExchangeError(f"No ticker for {symbol}")
+            return float(items[0].get("lastPrice", 0))
         except ExchangeError:
             raise
         except Exception as exc:

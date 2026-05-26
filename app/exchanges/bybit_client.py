@@ -40,6 +40,9 @@ class BybitClient(ExchangeBase):
     ) -> list[CandleData]:
         return await self._rest.fetch_klines(symbol, interval, limit)
 
+    async def fetch_last_price(self, symbol: str) -> float:
+        return await self._rest.get_last_price(symbol)
+
     async def stream_candles(
         self,
         symbol: str,
@@ -63,10 +66,28 @@ class BybitClient(ExchangeBase):
         }
         if order.price:
             params["price"] = str(order.price)
+        if order.stop_loss is not None:
+            params["stopLoss"] = str(order.stop_loss)
+        if order.take_profit is not None:
+            params["takeProfit"] = str(order.take_profit)
+        if order.stop_loss is not None or order.take_profit is not None:
+            params["tpslMode"] = "Full"
         result = await self._rest.place_order(params)
+        order_id = result.get("orderId", "")
+        avg_price = None
+        filled_qty = order.qty
+        if order_id:
+            try:
+                detail = await self._rest.get_order(symbol=order.symbol, order_id=order_id)
+                avg_price = float(detail.get("avgPrice") or 0) or None
+                filled_qty = float(detail.get("cumExecQty") or order.qty)
+            except ExchangeError:
+                pass
         return ExchangeOrderResult(
-            exchange_order_id=result.get("orderId", ""),
-            status="open",
+            exchange_order_id=order_id,
+            status=result.get("orderStatus", "open"),
+            filled_qty=filled_qty,
+            avg_price=avg_price,
             raw=result,
         )
 

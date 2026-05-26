@@ -41,6 +41,8 @@ class TradeOrderRequest:
     price: float | None = None
     client_order_id: str | None = None
     correlation_id: str | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
 
 
 @dataclass

@@ -140,6 +140,24 @@ select {
 .card.wide { grid-column: 1 / -1; }
 
 .chart { height: 420px; width: 100%; }
+.tv-chart-wrap {
+  height: 480px;
+  width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.tradingview-widget-container {
+  height: 100%;
+  width: 100%;
+}
+.tradingview-widget-copyright {
+  font-size: 0.7rem;
+  color: var(--muted);
+  padding: 0.25rem 0;
+}
+.learning-box { font-size: 0.85rem; }
+.learning-box strong { color: var(--accent); }
 .indicator-row {
   display: flex;
   flex-wrap: wrap;

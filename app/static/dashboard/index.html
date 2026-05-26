@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Crypto Trading Bot — Панель управления</title>
   <link rel="stylesheet" href="/assets/styles.css" />
-  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
   <header class="topbar">
@@ -13,11 +12,12 @@
       <span class="logo">◇</span>
       <div>
         <h1>Crypto Trading Bot</h1>
-        <p class="subtitle">Paper-first · Bybit spot · Объяснимые решения</p>
+        <p class="subtitle">Paper-first · Bybit · Память · Обучение · Новости 24/7</p>
       </div>
     </div>
     <div class="topbar-actions">
       <span id="modeBadge" class="badge">PAPER</span>
+      <span id="newsBadge" class="badge muted">News 24/7</span>
       <span id="marketBadge" class="badge muted">Bybit data</span>
       <span id="botStatus" class="badge off">Остановлен</span>
     </div>
@@ -40,13 +40,16 @@
       <button id="btnRefreshNews" class="btn ghost">Обновить новости</button>
     </div>
     <p id="lastRun" class="hint"></p>
+    <p id="backgroundStatus" class="hint"></p>
   </section>
 
   <main class="grid">
     <section class="card chart-card">
-      <h2>График и уровни</h2>
-      <p class="hint">Свечи из Bybit · линии = индикаторы и план сделки (entry / SL / TP)</p>
-      <div id="chart" class="chart"></div>
+      <h2>График TradingView (реальное время)</h2>
+      <p class="hint">Bybit spot · обновляется при смене символа / таймфрейма</p>
+      <div id="tvChartWrap" class="tv-chart-wrap">
+        <div id="tvChartContainer" class="tradingview-widget-container"></div>
+      </div>
       <div id="indicatorRow" class="indicator-row"></div>
       <h3 class="subheading">Все таймфреймы</h3>
       <div id="multiTfPanel" class="multi-tf-panel"></div>
@@ -67,10 +70,20 @@
         <h2>Последний сигнал</h2>
         <div id="signalBox" class="signal-box"></div>
       </section>
+
+      <section class="card">
+        <h2>Обучение</h2>
+        <div id="learningBox" class="learning-box"></div>
+      </section>
     </aside>
 
     <section class="card wide">
-      <h2>Новости (что видел бот)</h2>
+      <h2>Изменения на графике (память бота)</h2>
+      <ul id="changesList" class="audit-list"></ul>
+    </section>
+
+    <section class="card wide">
+      <h2>Новости (24/7, что видел бот)</h2>
       <ul id="newsList" class="news-list"></ul>
     </section>
 
@@ -82,7 +95,8 @@
 
   <footer class="footer">
     API: <a href="/docs" target="_blank">/docs</a> ·
-    Режим live только через <code>LIVE_TRADING_ENABLED=true</code>
+    Память: <a href="/api/v1/memory/changes" target="_blank">/memory</a> ·
+    Обучение: <a href="/api/v1/learning/summary" target="_blank">/learning</a>
   </footer>
 
   <script src="/assets/app.js"></script>

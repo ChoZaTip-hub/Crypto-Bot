@@ -8,7 +8,9 @@ from app.api.v1 import (
     bot,
     dashboard,
     health,
+    learning,
     market,
+    memory,
     news,
     orders,
     positions,
@@ -20,6 +22,8 @@ api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(bot.router)
+api_router.include_router(memory.router)
+api_router.include_router(learning.router)
 api_router.include_router(market.router)
 api_router.include_router(signals.router)
 api_router.include_router(orders.router)

@@ -14,6 +14,7 @@ from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
 from app.db.init_db import DatabaseInitializer
 from app.db.session import DatabaseSessionManager
+from app.services.background_manager import BackgroundManager
 from app.services.bot_manager import BotManager
 
 STATIC_DIR = Path(__file__).resolve().parent / "static" / "dashboard"
@@ -39,10 +40,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         ) from exc
     app.state.db_manager = db_manager
     app.state.bot_manager = BotManager(db_manager, settings)
+    app.state.background_manager = BackgroundManager(db_manager, settings)
+    if settings.background_services_enabled:
+        await app.state.background_manager.start()
     if settings.bot_auto_start:
         await app.state.bot_manager.start()
     yield
     await app.state.bot_manager.stop()
+    if settings.background_services_enabled:
+        await app.state.background_manager.stop()
     await db_manager.close()
 
 

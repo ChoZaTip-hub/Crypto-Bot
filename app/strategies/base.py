@@ -14,6 +14,8 @@ class StrategyInputs:
     sentiment_score: float = 0.0
     sentiment_high_impact: bool = False
     regime: str = "unknown"
+    memory_context: dict[str, Any] = field(default_factory=dict)
+    learning_weights: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass

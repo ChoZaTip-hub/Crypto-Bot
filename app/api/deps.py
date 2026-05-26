@@ -7,6 +7,7 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.services.background_manager import BackgroundManager
 from app.services.bot_manager import BotManager
 
 
@@ -30,6 +31,11 @@ def get_bot_manager(request: Request) -> BotManager:
     return request.app.state.bot_manager
 
 
+def get_background_manager(request: Request) -> BackgroundManager:
+    return request.app.state.background_manager
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 BotManagerDep = Annotated[BotManager, Depends(get_bot_manager)]
+BackgroundManagerDep = Annotated[BackgroundManager, Depends(get_background_manager)]

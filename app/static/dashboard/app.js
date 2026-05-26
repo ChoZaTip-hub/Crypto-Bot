@@ -1,18 +1,11 @@
 const API = "";
 
-let chart, candleSeries, lineSeries = [];
 const TF_LABELS = {
-  "1": "1m",
-  "3": "3m",
-  "5": "5m",
-  "15": "15m",
-  "30": "30m",
-  "60": "1h",
-  "240": "4h",
-  "D": "1D",
-  "W": "1W",
-  "M": "1MN",
+  "1": "1m", "3": "3m", "5": "5m", "15": "15m", "30": "30m",
+  "60": "1h", "240": "4h", "D": "1D", "W": "1W", "M": "1MN",
 };
+
+let tvWidgetNonce = 0;
 
 async function api(path, options = {}) {
   const res = await fetch(API + path, options);
@@ -37,48 +30,56 @@ function tfLabel(code) {
   return TF_LABELS[code] || code;
 }
 
-function initChart() {
-  const el = $("chart");
-  chart = LightweightCharts.createChart(el, {
-    layout: { background: { color: "#141b24" }, textColor: "#8b9cb3" },
-    grid: { vertLines: { color: "#243044" }, horzLines: { color: "#243044" } },
-    timeScale: { timeVisible: true, secondsVisible: false },
-  });
-  candleSeries = chart.addCandlestickSeries({
-    upColor: "#22c55e",
-    downColor: "#ef4444",
-    borderVisible: false,
-    wickUpColor: "#22c55e",
-    wickDownColor: "#ef4444",
-  });
-  window.addEventListener("resize", () => {
-    chart.applyOptions({ width: el.clientWidth });
-  });
+function symbolToTradingView(sym) {
+  const s = (sym || "BTCUSDT").toUpperCase();
+  return s.includes(":") ? s : `BYBIT:${s}`;
 }
 
-function clearLines() {
-  lineSeries.forEach((s) => chart.removeSeries(s));
-  lineSeries = [];
-}
+function loadTradingViewChart(symbol, interval) {
+  const wrap = $("tvChartContainer");
+  if (!wrap) return;
+  tvWidgetNonce += 1;
+  const nonce = tvWidgetNonce;
+  wrap.innerHTML = `
+    <div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div>
+    <div class="tradingview-widget-copyright">
+      <a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank">
+        <span class="blue-text">TradingView</span>
+      </a>
+    </div>`;
 
-function drawOverlays(overlays, candles) {
-  clearLines();
-  if (!candles.length) return;
-  const lastTime = candles[candles.length - 1].time;
-  const firstTime = candles[0].time;
-  overlays.forEach((o) => {
-    const series = chart.addLineSeries({
-      color: o.color,
-      lineWidth: 1,
-      lineStyle: o.name === "Entry" ? 0 : 2,
-      title: o.name,
-    });
-    series.setData([
-      { time: firstTime, value: o.value },
-      { time: lastTime, value: o.value },
-    ]);
-    lineSeries.push(series);
+  const script = document.createElement("script");
+  script.type = "text/javascript";
+  script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+  script.async = true;
+  script.innerHTML = JSON.stringify({
+    allow_symbol_change: false,
+    calendar: false,
+    details: false,
+    hide_side_toolbar: true,
+    hide_top_toolbar: false,
+    hide_legend: false,
+    hide_volume: false,
+    hotlist: false,
+    interval: interval || "5",
+    locale: "en",
+    save_image: true,
+    style: "1",
+    symbol: symbolToTradingView(symbol),
+    theme: "dark",
+    timezone: "Etc/UTC",
+    backgroundColor: "#0F0F0F",
+    gridColor: "rgba(242, 242, 242, 0.06)",
+    watchlist: [],
+    withdateranges: true,
+    compareSymbols: [],
+    studies: ["RSI@tv-basicstudies", "MASimple@tv-basicstudies"],
+    autosize: true,
   });
+  script.onload = () => {
+    if (nonce !== tvWidgetNonce) script.remove();
+  };
+  wrap.appendChild(script);
 }
 
 function renderIndicators(indicators) {
@@ -164,6 +165,37 @@ function renderRisk(events, bot) {
   el.innerHTML = ks + `<ul class="audit-list">${items || "<li>Нет событий</li>"}</ul>`;
 }
 
+function renderLearning(learning) {
+  const el = $("learningBox");
+  if (!learning) {
+    el.textContent = "Нет данных обучения";
+    return;
+  }
+  const wr = ((learning.win_rate || 0) * 100).toFixed(0);
+  el.innerHTML = `
+    <p>Исходов: <strong>${learning.total_outcomes || 0}</strong> · Win rate: <strong>${wr}%</strong></p>
+    <p class="hint">W: ${learning.wins || 0} / L: ${learning.losses || 0}</p>
+    <ul class="audit-list">
+      ${(learning.recent || []).slice(0, 5).map((o) =>
+        `<li>${o.symbol} ${o.outcome} ${o.pnl_pct?.toFixed(2)}% (${o.exit_reason})</li>`
+      ).join("") || "<li>Пока нет закрытых сделок</li>"}
+    </ul>`;
+}
+
+function renderChanges(changes) {
+  const ul = $("changesList");
+  ul.innerHTML = "";
+  (changes || []).forEach((c) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="meta">${c.severity} · ${c.timeframe || ""}</span>
+      <strong>${escapeHtml(c.change_type)}</strong> — ${escapeHtml(c.message || "")}`;
+    ul.appendChild(li);
+  });
+  if (!changes?.length) {
+    ul.innerHTML = "<li class='hint'>Изменения появятся после циклов бота (память снапшотов)</li>";
+  }
+}
+
 function renderNews(news) {
   const ul = $("newsList");
   ul.innerHTML = "";
@@ -197,9 +229,25 @@ function updateBotBadges(bot, candleSource) {
     bot.market_source === "bybit"
       ? `Bybit · ${candleSource || "data"}`
       : "Mock data";
+
+  const bg = bot.background || {};
+  const newsBadge = $("newsBadge");
+  if (bg.running) {
+    newsBadge.textContent = bg.last_news_at ? "News 24/7 ✓" : "News 24/7 …";
+    newsBadge.className = "badge on";
+  } else {
+    newsBadge.textContent = "News off";
+    newsBadge.className = "badge muted";
+  }
+
   $("lastRun").textContent = bot.last_run_at
     ? `Последний цикл: ${bot.last_run_at}${bot.last_error ? " · Ошибка: " + bot.last_error : ""}`
     : "";
+
+  const bgEl = $("backgroundStatus");
+  if (bgEl && bg.running) {
+    bgEl.textContent = `Фон: новости каждые ${bg.news_interval_seconds}s · позиции каждые ${bg.position_interval_seconds}s · последние новости: ${bg.last_news_at || "—"}`;
+  }
 }
 
 function populateTimeframes(timeframes, labels) {
@@ -213,6 +261,9 @@ function populateTimeframes(timeframes, labels) {
     sel.appendChild(opt);
   });
 }
+
+let lastTvSymbol = "";
+let lastTvInterval = "";
 
 async function loadOverview() {
   const symbol = $("symbolSelect").value;
@@ -230,14 +281,14 @@ async function loadOverview() {
   renderRisk(overview.risk_events, overview.bot);
   renderNews(overview.news);
   renderAudit(overview.audit);
+  renderLearning(overview.learning);
+  renderChanges(overview.market_changes);
 
-  if (chartData.candles?.length) {
-    candleSeries.setData(chartData.candles);
-    drawOverlays(chartData.overlays || [], chartData.candles);
-    chart.timeScale().fitContent();
-  } else {
-    candleSeries.setData([]);
-    clearLines();
+  const tv = overview.tradingview || { symbol: symbolToTradingView(symbol), interval: timeframe };
+  if (tv.symbol !== lastTvSymbol || tv.interval !== lastTvInterval) {
+    lastTvSymbol = tv.symbol;
+    lastTvInterval = tv.interval;
+    loadTradingViewChart(symbol, timeframe);
   }
 }
 
@@ -259,7 +310,6 @@ function escapeHtml(s) {
 }
 
 async function init() {
-  initChart();
   const [status, meta] = await Promise.all([
     api("/api/v1/bot/status"),
     api("/api/v1/dashboard/meta"),
@@ -279,8 +329,16 @@ async function init() {
   );
   populateTimeframes(tfs, labels);
 
-  $("symbolSelect").addEventListener("change", refreshAll);
-  $("timeframeSelect").addEventListener("change", refreshAll);
+  loadTradingViewChart(select.value, $("timeframeSelect").value);
+
+  $("symbolSelect").addEventListener("change", () => {
+    lastTvSymbol = "";
+    refreshAll();
+  });
+  $("timeframeSelect").addEventListener("change", () => {
+    lastTvInterval = "";
+    refreshAll();
+  });
 
   $("btnStart").onclick = async () => {
     await api("/api/v1/bot/start", { method: "POST" });

@@ -40,7 +40,9 @@ class BotOrchestrator:
         self._market = MarketDataService(
             self._market_exchange, candle_repo, self._audit, settings
         )
-        self._strategy = StrategyService(session, self._audit, settings.timeframes)
+        self._strategy = StrategyService(
+            session, self._audit, settings.timeframes, settings=settings
+        )
         self._risk = RiskService(session, settings, self._audit, self._market)
         self._execution = ExecutionService(
             session, self._bybit, self._paper, settings, self._audit
@@ -63,8 +65,10 @@ class BotOrchestrator:
         """Full cycle: market (Bybit) → news → sentiment → signals → risk → paper execution."""
         await self._ensure_paper()
         market_counts = await self._market.ingest_all()
-        news_counts = await self._news.ingest_all()
-        await self._sentiment.score_recent_news(self._settings.symbol_whitelist)
+        news_counts: dict[str, int] = {}
+        if not self._settings.background_services_enabled:
+            news_counts = await self._news.ingest_all()
+            await self._sentiment.score_recent_news(self._settings.symbol_whitelist)
         portfolio = await self._portfolio.snapshot()
         results: list[dict[str, Any]] = []
 
