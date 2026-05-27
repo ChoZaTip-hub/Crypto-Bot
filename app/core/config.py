@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 
 import os
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from app.core.constants import (
@@ -44,6 +44,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "crypto-trading-bot"
@@ -79,7 +80,7 @@ class Settings(BaseSettings):
     min_mtf_edge: float = 1.0
     # TFs shown on dashboard multi-TF panel (not all 9 on every refresh)
     dashboard_indicator_timeframes: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["5", "15", "60", "240", "D"]
+        default_factory=lambda: ["1", "3", "5", "15", "30", "60", "240", "D"]
     )
     live_price_poll_seconds: float = 2.0
 
@@ -118,7 +119,10 @@ class Settings(BaseSettings):
     # AI trade analysis (OpenAI-compatible API, structured data — not chart screenshots)
     ai_enabled: bool = False
     ai_provider: str = "openai"
-    ai_api_key: str = ""
+    ai_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("AI_API_KEY", "OPENAI_API_KEY"),
+    )
     ai_model: str = "gpt-4o-mini"
     ai_base_url: str = "https://api.openai.com/v1"
     ai_auto_analyze: bool = True
@@ -166,9 +170,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def fill_ai_api_key(self) -> "Settings":
-        if not self.ai_api_key:
-            key = os.getenv("OPENAI_API_KEY") or os.getenv("AI_API_KEY") or ""
-            object.__setattr__(self, "ai_api_key", key)
+        """Fallback if key was exported in shell but not in .env file fields."""
+        if not (self.ai_api_key and self.ai_api_key.strip()):
+            key = (os.getenv("AI_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()
+            if key:
+                object.__setattr__(self, "ai_api_key", key)
         return self
 
     @property

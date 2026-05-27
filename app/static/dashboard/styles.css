@@ -208,6 +208,12 @@ select {
 .tf-setup-row.sell { border-left: 3px solid var(--red); }
 .tf-setup-row strong { display: block; margin-bottom: 0.15rem; }
 .tf-setup-row .hint { font-size: 0.72rem; line-height: 1.35; }
+.tf-setup-row--active {
+  outline: 1px solid var(--accent, #3b82f6);
+  background: rgba(59, 130, 246, 0.08);
+}
+.brief-tf-table tr.chart-tf-row td { font-weight: 600; }
+.chart-tf-mark { color: var(--accent, #3b82f6); font-size: 0.85em; }
 
 .ai-analysis-panel {
   margin-top: 0.5rem;

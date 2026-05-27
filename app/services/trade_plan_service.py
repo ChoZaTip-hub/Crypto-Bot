@@ -11,7 +11,7 @@ from app.db.repositories.position_repo import PositionRepository
 from app.services.audit_service import AuditService
 from app.services.live_price_service import fetch_display_price
 from app.services.setup_scanner import enrich_plan_with_setups, scan_timeframe_setups
-from app.strategies.base import StrategyInputs
+from app.strategies.base import StrategyInputs, StrategySignal
 from app.strategies.levels import apply_live_trade_levels, pick_atr
 from app.strategies.multi_timeframe_strategy import MultiTimeframeStrategy
 
@@ -116,24 +116,62 @@ async def build_fresh_trade_plan(
     )
     last_regime: str | None = None
 
+    def _resolve_display_tf() -> str:
+        if chart_timeframe in indicators_by_tf:
+            return chart_timeframe
+        for fb in (chart_timeframe, "5", "15", "30", "60", "240", "1", "3", "D"):
+            if fb in indicators_by_tf:
+                return fb
+        return chart_timeframe
+
     def _finalize(plan: dict[str, Any], regime: str | None = None) -> dict[str, Any]:
         nonlocal last_regime
         last_regime = regime
         plan["symbol"] = symbol
         plan["live_price"] = live_price
+        plan["chart_timeframe"] = chart_timeframe
+        plan["chart_timeframe_label"] = label_for_timeframe(chart_timeframe)
         setups = scan_timeframe_setups(symbol, indicators_by_tf, live_price)
         plan = enrich_plan_with_setups(plan, setups)
+        chart_setup = next((s for s in setups if s["timeframe"] == chart_timeframe), None)
+        if chart_setup:
+            plan["chart_setup"] = chart_setup
+        display_tf = _resolve_display_tf()
         if plan.get("action") in ("BUY", "SELL"):
             plan["entry"] = live_price
-            if plan.get("primary_setup"):
-                ps = plan["primary_setup"]
-                plan["setup_timeframe_label"] = ps.get("label")
-                plan["horizon_tf"] = ps.get("timeframe", chart_timeframe)
-                plan["horizon_label"] = label_for_timeframe(plan["horizon_tf"])
+            sig = apply_live_trade_levels(
+                StrategySignal(
+                    symbol=symbol,
+                    action=SignalAction.BUY if plan["action"] == "BUY" else SignalAction.SELL,
+                    confidence=float(plan.get("confidence") or 0),
+                    reason=plan.get("reason") or "",
+                    stop_loss=plan.get("stop_loss"),
+                    take_profit=plan.get("take_profit"),
+                ),
+                live_price,
+                indicators_by_tf,
+                horizon_tf=display_tf,
+            )
+            plan["stop_loss"] = sig.stop_loss
+            plan["take_profit"] = sig.take_profit
+            plan["horizon_tf"] = display_tf
+            plan["horizon_label"] = label_for_timeframe(display_tf)
+            plan["atr"] = pick_atr(indicators_by_tf, prefer_tf=display_tf)
+        elif chart_setup:
+            plan["horizon_tf"] = chart_timeframe
+            plan["horizon_label"] = label_for_timeframe(chart_timeframe)
+            plan["suggested_chart_action"] = chart_setup["action"]
+            plan["entry"] = chart_setup["entry"]
+            plan["stop_loss"] = chart_setup["stop_loss"]
+            plan["take_profit"] = chart_setup["take_profit"]
+        if plan.get("primary_setup"):
+            ps = plan["primary_setup"]
+            plan["setup_timeframe_label"] = ps.get("label")
+            plan["setup_timeframe"] = ps.get("timeframe")
+        tf_lbl = label_for_timeframe(display_tf if plan.get("action") in ("BUY", "SELL") else chart_timeframe)
         plan["analysis_note"] = (
-            f"{symbol}: цена Bybit {live_price:,.2f}. "
-            f"Сделки по ТФ ниже (не картинка TV). "
-            f"Итог MTF: {plan.get('action')} — {plan.get('reason', '')[:80]}"
+            f"{symbol}: цена Bybit {live_price:,.2f} · график {tf_lbl}. "
+            f"Вход/SL/TP — ATR выбранного ТФ. MTF: {plan.get('action')} — {plan.get('reason', '')[:80]}"
         )
         return plan
 
@@ -161,8 +199,8 @@ async def build_fresh_trade_plan(
             live_price=live_price,
             source="open_position",
             reason="Позиция уже открыта — вход зафиксирован при сделке",
-            horizon_tf="5",
-            atr=pick_atr(indicators_by_tf),
+            horizon_tf=chart_timeframe,
+            atr=pick_atr(indicators_by_tf, prefer_tf=chart_timeframe),
             )
             )
         )
@@ -178,7 +216,7 @@ async def build_fresh_trade_plan(
             live_price=live_price,
             source="no_indicators",
             reason="Загрузите свечи (кнопка «Загрузить свечи»)",
-            horizon_tf="5",
+            horizon_tf=chart_timeframe,
             )
             )
         )
@@ -258,7 +296,7 @@ async def build_quick_live_plan(
         rows = await candle_repo.get_by_symbol_and_timeframe(symbol, tf, 120)
         if len(rows) < 5:
             continue
-        if tf == "5":
+        if tf == chart_timeframe:
             fallback = float(rows[-1].close)
         tf_ind = ind_svc.compute_from_ohlcv(
             [c.close for c in rows],

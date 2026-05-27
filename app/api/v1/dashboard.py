@@ -106,19 +106,40 @@ async def dashboard_live_plan(
 async def dashboard_live_price(
     settings: SettingsDep,
     symbol: str = Query("BTCUSDT"),
+    timeframe: str = Query("5"),
 ) -> dict:
     """Display price = Bybit mainnet (same as TradingView BYBIT:*)."""
     symbol = symbol.upper()
     info = await fetch_display_price(symbol, settings)
-    info["note_ru"] = _price_note_ru(settings, info)
+    info["note_ru"] = _price_note_ru(settings, info, chart_timeframe=timeframe)
     return info
 
 
-def _price_note_ru(settings: Settings, info: dict) -> str:
+def _indicator_timeframes_for_chart(settings: Settings, chart_timeframe: str) -> list[str]:
+    return list(
+        dict.fromkeys(
+            [
+                chart_timeframe,
+                *settings.dashboard_indicator_timeframes,
+                "1",
+                "3",
+                "5",
+                "15",
+                "30",
+                "60",
+                "240",
+                "D",
+            ]
+        )
+    )
+
+
+def _price_note_ru(settings: Settings, info: dict, chart_timeframe: str = "5") -> str:
     if not settings.use_bybit_market_data:
         return "Демо-данные, не Bybit."
+    tf_lbl = label_for_timeframe(chart_timeframe)
     return (
-        "Вход / SL / TP пересчитываются от текущей цены Bybit и ATR (5m). "
+        f"Вход / SL / TP — от цены Bybit и ATR ({tf_lbl}), таймфрейм графика. "
         "Не из старых записей в базе."
     )
 
@@ -197,7 +218,7 @@ async def dashboard_overview(
         indicators_all_tf: dict[str, dict] = {}
         trader_briefing: dict | None = None
         candle_repo = CandleRepository(session)
-        for tf in settings.dashboard_indicator_timeframes:
+        for tf in _indicator_timeframes_for_chart(settings, timeframe):
             tf_candles = await candle_repo.get_by_symbol_and_timeframe(symbol, tf, 120)
             if len(tf_candles) >= 5:
                 tf_ind = ind_svc.compute_from_ohlcv(
@@ -256,8 +277,10 @@ async def dashboard_overview(
                 stop_loss=fresh_plan.get("stop_loss"),
                 take_profit=fresh_plan.get("take_profit"),
             )
-            apply_live_trade_levels(sig, live_px or 0, indicators_all_tf)
-            trader_briefing = analysis.build_briefing(inputs, sig, live_price=live_px)
+            apply_live_trade_levels(sig, live_px or 0, indicators_all_tf, horizon_tf=timeframe)
+            trader_briefing = analysis.build_briefing(
+                inputs, sig, live_price=live_px, chart_timeframe=timeframe
+            )
 
         price_info = await _resolve_display_price(symbol, settings, candle_close)
 
@@ -300,7 +323,7 @@ async def dashboard_overview(
             "last_price": price_info.get("price", 0),
             "price_source": price_info.get("source"),
             "price_info": price_info,
-            "price_note": _price_note_ru(settings, price_info),
+            "price_note": _price_note_ru(settings, price_info, chart_timeframe=timeframe),
             "indicators": {
                 k: float(v) for k, v in indicators.items() if isinstance(v, (int, float))
             },
@@ -407,7 +430,7 @@ async def chart_data(
             }
         candle_repo = CandleRepository(session)
         ind_svc = IndicatorService(session, AuditService(session))
-        for tf in list(dict.fromkeys([timeframe, "5", "15", "30", "60", "240"])):
+        for tf in _indicator_timeframes_for_chart(settings, timeframe):
             if tf in indicators_by_tf:
                 continue
             tf_rows = await candle_repo.get_by_symbol_and_timeframe(symbol, tf, 120)
@@ -443,13 +466,55 @@ async def chart_data(
                 "live_price": candle_close,
             }
 
+        price_info = await _resolve_display_price(symbol, settings, candle_close)
+
+        tf_lbl = label_for_timeframe(timeframe)
+        trader_briefing = None
+        if indicators_by_tf and trade_plan:
+            from app.core.constants import SignalAction
+            from app.strategies.base import StrategySignal
+
+            analysis = MarketAnalysisService()
+            live_px = float(price_info.get("price") or 0) or candle_close or None
+            inputs = StrategyInputs(
+                symbol=symbol,
+                timeframes=indicators_by_tf,
+                regime=trade_plan.get("regime"),
+                live_price=live_px,
+            )
+            try:
+                action_enum = SignalAction(trade_plan.get("action") or "HOLD")
+            except ValueError:
+                action_enum = SignalAction.HOLD
+            sig = StrategySignal(
+                symbol=symbol,
+                action=action_enum,
+                confidence=float(trade_plan.get("confidence") or 0),
+                reason=trade_plan.get("reason") or "",
+                entry_price=trade_plan.get("entry"),
+                stop_loss=trade_plan.get("stop_loss"),
+                take_profit=trade_plan.get("take_profit"),
+            )
+            apply_live_trade_levels(sig, live_px or 0, indicators_by_tf, horizon_tf=timeframe)
+            trader_briefing = analysis.build_briefing(
+                inputs, sig, live_price=live_px, chart_timeframe=timeframe
+            )
+
         trade_levels: list[dict] = []
         level_specs: list[tuple[str, float | None, str, str]] = []
-        if trade_plan and trade_plan.get("action") in ("BUY", "SELL"):
+        show_levels = trade_plan and (
+            trade_plan.get("action") in ("BUY", "SELL")
+            or trade_plan.get("chart_setup")
+            or trade_plan.get("suggested_chart_action")
+        )
+        if show_levels:
+            entry = trade_plan.get("entry")
+            sl = trade_plan.get("stop_loss")
+            tp = trade_plan.get("take_profit")
             level_specs = [
-                ("Entry", trade_plan.get("entry"), "#2563eb", "solid"),
-                ("Stop Loss", trade_plan.get("stop_loss"), "#dc2626", "dashed"),
-                ("Take Profit", trade_plan.get("take_profit"), "#16a34a", "dashed"),
+                (f"Entry ({tf_lbl})", entry, "#2563eb", "solid"),
+                (f"Stop Loss ({tf_lbl})", sl, "#dc2626", "dashed"),
+                (f"Take Profit ({tf_lbl})", tp, "#16a34a", "dashed"),
             ]
 
         for label, val, color, style in level_specs:
@@ -463,8 +528,6 @@ async def chart_data(
                     }
                 )
 
-        price_info = await _resolve_display_price(symbol, settings, candle_close)
-
         return {
             "symbol": symbol,
             "timeframe": timeframe,
@@ -476,9 +539,10 @@ async def chart_data(
             "last_price": price_info.get("price", 0),
             "price_source": price_info.get("source"),
             "price_info": price_info,
-            "price_note": _price_note_ru(settings, price_info),
+            "price_note": _price_note_ru(settings, price_info, chart_timeframe=timeframe),
             "trade_levels": trade_levels,
             "trade_plan": trade_plan,
+            "trader_briefing": trader_briefing,
             "indicators": {
                 k: float(v) for k, v in indicators.items() if isinstance(v, (int, float))
             },

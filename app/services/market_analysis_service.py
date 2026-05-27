@@ -136,6 +136,7 @@ class MarketAnalysisService:
         signal: StrategySignal,
         *,
         live_price: float | None = None,
+        chart_timeframe: str = "5",
     ) -> dict[str, Any]:
         per_tf: list[dict[str, Any]] = []
         bull_w = bear_w = 0.0
@@ -166,6 +167,7 @@ class MarketAnalysisService:
                     "rsi": float(ind.get("rsi")) if ind.get("rsi") is not None else None,
                     "adx": float(ind.get("adx")) if ind.get("adx") is not None else None,
                     "ema": float(ind.get("ema")) if ind.get("ema") is not None else None,
+                    "is_chart_tf": tf == chart_timeframe,
                 }
             )
 
@@ -174,7 +176,9 @@ class MarketAnalysisService:
         m_edge = _tier_edge(per_tf, "mid")
         l_edge = _tier_edge(per_tf, "lower")
 
-        mtf_verdict, mtf_text = self._top_down_verdict(h_edge, m_edge, l_edge, bull_w, bear_w, edge)
+        mtf_verdict, mtf_text = self._top_down_verdict(
+            h_edge, m_edge, l_edge, bull_w, bear_w, edge, chart_timeframe=chart_timeframe
+        )
 
         action = signal.action.value if isinstance(signal.action, SignalAction) else str(signal.action)
         is_long = action == "BUY"
@@ -223,9 +227,11 @@ class MarketAnalysisService:
             },
             "timeframes": per_tf,
             "trade": trade_block,
+            "chart_timeframe": chart_timeframe,
+            "chart_timeframe_label": label_for_timeframe(chart_timeframe),
             "data_note": (
-                "Вход / SL / TP — от текущей цены Bybit и ATR (5m), обновляются каждые 2 с. "
-                "По ТФ в таблице — закрытие последней свечи."
+                f"Вход / SL / TP — от цены Bybit и ATR ({label_for_timeframe(chart_timeframe)}), "
+                "таймфрейм графика. В таблице — закрытие последней свечи по каждому ТФ."
             ),
         }
 
@@ -237,7 +243,10 @@ class MarketAnalysisService:
         bull_w: float,
         bear_w: float,
         edge: float,
+        *,
+        chart_timeframe: str = "5",
     ) -> tuple[str, str]:
+        chart_lbl = label_for_timeframe(chart_timeframe)
         """Top-down: старшие ТФ задают bias, младшие — подтверждение входа."""
         if h_edge >= 1.5 and l_edge >= 0:
             return "bullish", (
@@ -252,7 +261,7 @@ class MarketAnalysisService:
         if h_edge >= 1.5 and l_edge < -0.5:
             return "mixed", (
                 f"Старшие ТФ бычьи (+{h_edge:.1f}), но младшие против ({l_edge:+.1f}) — "
-                "ждать откат или подтверждение на 5m/15m."
+                f"ждать откат или подтверждение на {chart_lbl}."
             )
         if h_edge <= -1.5 and l_edge > 0.5:
             return "mixed", (

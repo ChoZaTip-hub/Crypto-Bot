@@ -30,7 +30,12 @@ def apply_ai_influence_to_plan(
         return plan
 
     rule_action = plan.get("action")
-    chart_tf = str(ai.get("best_timeframe") or plan.get("horizon_tf") or "5")
+    chart_tf = str(
+        plan.get("chart_timeframe")
+        or ai.get("best_timeframe")
+        or plan.get("horizon_tf")
+        or "5"
+    )
     plan["action"] = action
     plan["confidence"] = conf
     plan["source"] = "ai_influenced"

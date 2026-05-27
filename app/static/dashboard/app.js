@@ -49,6 +49,56 @@ function selectedSymbol() {
   return ($("symbolSelect")?.value || "BTCUSDT").toUpperCase();
 }
 
+function selectedChartTimeframe() {
+  return $("timeframeSelect")?.value || "5";
+}
+
+function tfLabel(tf) {
+  return TF_LABELS[tf] || tf;
+}
+
+/** Levels/labels for the chart TF (not MTF primary setup on another TF). */
+function resolvePlanForChart(plan) {
+  if (!plan || !planMatchesSymbol(plan)) return null;
+  const chartTf = selectedChartTimeframe();
+  const chartLbl = plan.chart_timeframe_label || tfLabel(chartTf);
+  const setup = (plan.setups || []).find((s) => s.timeframe === chartTf);
+  const base = { ...plan, chart_timeframe: chartTf, chart_timeframe_label: chartLbl };
+  if (setup) {
+    return {
+      ...base,
+      horizon_tf: chartTf,
+      horizon_label: setup.label || chartLbl,
+      entry: setup.entry,
+      stop_loss: setup.stop_loss,
+      take_profit: setup.take_profit,
+      suggested_chart_action: setup.action,
+    };
+  }
+  if (plan.chart_timeframe === chartTf || plan.horizon_tf === chartTf) {
+    return base;
+  }
+  return base;
+}
+
+function applyLevelLabels(plan) {
+  const lbl = plan?.horizon_label || plan?.chart_timeframe_label || tfLabel(selectedChartTimeframe());
+  const setLbl = (id, prefix) => {
+    const el = $(id);
+    if (el) el.textContent = `${prefix} (${lbl})`;
+  };
+  if (plan?.source === "open_position") {
+    const e = $("lblEntry");
+    if (e) e.textContent = "Вход (позиция открыта)";
+    setLbl("lblStop", "Stop Loss");
+    setLbl("lblTp", "Take Profit");
+    return;
+  }
+  setLbl("lblEntry", "Вход");
+  setLbl("lblStop", "Stop Loss");
+  setLbl("lblTp", "Take Profit");
+}
+
 function planMatchesSymbol(plan) {
   if (!plan) return false;
   const sym = selectedSymbol();
@@ -56,25 +106,23 @@ function planMatchesSymbol(plan) {
 }
 
 function applyLivePlanToLevelCards(plan) {
-  if (!plan || !planMatchesSymbol(plan)) return;
+  const resolved = resolvePlanForChart(plan);
+  if (!resolved) return;
   const set = (id, v) => {
     const el = $(id);
     if (el) el.textContent = formatPrice(v);
   };
-  if (plan.action === "BUY" || plan.action === "SELL") {
-    set("lvlEntry", plan.entry);
-    set("lvlStop", plan.stop_loss);
-    set("lvlTp", plan.take_profit);
+  const showLevels =
+    resolved.action === "BUY" ||
+    resolved.action === "SELL" ||
+    resolved.suggested_chart_action ||
+    resolved.chart_setup;
+  if (showLevels) {
+    set("lvlEntry", resolved.entry);
+    set("lvlStop", resolved.stop_loss);
+    set("lvlTp", resolved.take_profit);
   }
-  const lblEntry = $("lblEntry");
-  if (lblEntry && plan.entry != null && (plan.action === "BUY" || plan.action === "SELL")) {
-    if (plan.source === "open_position") {
-      lblEntry.textContent = "Вход (позиция открыта)";
-    } else {
-      const hz = plan.horizon_label || "5m";
-      lblEntry.textContent = `Вход (сейчас · ${hz})`;
-    }
-  }
+  applyLevelLabels(resolved);
 }
 
 function renderAiAnalysis(ai) {
@@ -148,6 +196,7 @@ function renderTfSetups(plan) {
     el.innerHTML = "<p class='hint'>Выберите монету…</p>";
     return;
   }
+  const chartTf = selectedChartTimeframe();
   const setups = plan.setups || [];
   if (!setups.length) {
     el.innerHTML =
@@ -157,8 +206,10 @@ function renderTfSetups(plan) {
   el.innerHTML = setups
     .map((s) => {
       const cls = s.action === "BUY" ? "buy" : "sell";
-      return `<div class="tf-setup-row ${cls}">
-        <strong>${escapeHtml(s.label)} · ${escapeHtml(s.action)}</strong>
+      const active = s.timeframe === chartTf ? " tf-setup-row--active" : "";
+      const tag = s.timeframe === chartTf ? " · <em>график</em>" : "";
+      return `<div class="tf-setup-row ${cls}${active}">
+        <strong>${escapeHtml(s.label)} · ${escapeHtml(s.action)}${tag}</strong>
         <span>Вход сейчас: ${formatPrice(s.entry)} · SL ${formatPrice(s.stop_loss)} · TP ${formatPrice(s.take_profit)}</span>
         <span class="hint">${escapeHtml(s.reason || "")}</span>
       </div>`;
@@ -168,10 +219,21 @@ function renderTfSetups(plan) {
 
 function updateTradeLevelsPanel(chartData, overview) {
   const sym = selectedSymbol();
-  let plan = overview?.trade_plan || chartData?.trade_plan;
+  const chartTf = selectedChartTimeframe();
+  let plan = chartData?.trade_plan || overview?.trade_plan;
   if (plan && plan.symbol && plan.symbol !== sym) plan = null;
-  if (lastLivePlan && planMatchesSymbol(lastLivePlan)) plan = lastLivePlan;
-  else if (plan && !planMatchesSymbol(plan)) plan = null;
+  if (
+    lastLivePlan &&
+    planMatchesSymbol(lastLivePlan) &&
+    (!lastLivePlan.chart_timeframe || lastLivePlan.chart_timeframe === chartTf)
+  ) {
+    if (!chartData?.trade_plan || chartData.trade_plan?.chart_timeframe === chartTf) {
+      plan = lastLivePlan;
+    }
+  } else if (plan && !planMatchesSymbol(plan)) {
+    plan = null;
+  }
+  plan = resolvePlanForChart(plan);
   const signal = overview?.signal;
   const last = currentDisplayPrice(chartData, overview);
   const set = (id, v) => {
@@ -202,7 +264,9 @@ async function pollLivePrice() {
   try {
     const tf = $("timeframeSelect")?.value || "5";
     const [data, planRes] = await Promise.all([
-      api(`/api/v1/dashboard/live-price?symbol=${encodeURIComponent(symbol)}`),
+      api(
+        `/api/v1/dashboard/live-price?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(tf)}`
+      ),
       api(
         `/api/v1/dashboard/live-plan?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(tf)}`
       ),
@@ -217,9 +281,12 @@ async function pollLivePrice() {
       updatePriceContextBanner(null, data);
     }
     if (planRes?.plan && planRes.symbol === symbol) {
-      lastLivePlan = planRes.plan;
-      applyLivePlanToLevelCards(planRes.plan);
-      renderTfSetups(planRes.plan);
+      const chartTf = selectedChartTimeframe();
+      if (!planRes.plan.chart_timeframe || planRes.plan.chart_timeframe === chartTf) {
+        lastLivePlan = planRes.plan;
+        applyLivePlanToLevelCards(planRes.plan);
+        renderTfSetups(planRes.plan);
+      }
     }
   } catch (e) {
     console.debug("live-price poll", e);
@@ -315,9 +382,13 @@ function updateTvChartFootnote(chartData, symbol, timeframe, statusEl) {
   const levels = chartData?.trade_levels || [];
   const dropped = chartData?.candles_dropped || 0;
   const src = chartData?.trade_plan?.source === "open_position" ? "открытая позиция" : "последний сигнал";
+  const plan = chartData?.trade_plan;
+  const hz = plan?.horizon_label || plan?.chart_timeframe_label || tfLabel(timeframe);
   let msg = `TradingView · ${symbol} · ${tfLabel(timeframe)}`;
   if (levels.length) {
-    msg += ` · Entry/SL/TP в панели (${src})`;
+    msg += ` · Entry/SL/TP (${hz}) в карточках (${src})`;
+  } else if (plan?.suggested_chart_action) {
+    msg += ` · на ${hz}: ${plan.suggested_chart_action} (MTF: ${plan.action})`;
   }
   if (dropped > 0) {
     msg += ` · отфильтровано ${dropped} битых свечей`;
@@ -429,10 +500,6 @@ async function withButton(btn, fn) {
   } finally {
     btn.disabled = prev;
   }
-}
-
-function tfLabel(code) {
-  return TF_LABELS[code] || code;
 }
 
 function symbolToTradingView(sym) {
@@ -556,13 +623,26 @@ function renderTradePlan(plan, signal, tradingParams, lastCycleDecisions) {
         }
       : null);
 
-  if (!data || data.action === "HOLD") {
+  const chartTf = selectedChartTimeframe();
+  const chartSetup = (data?.setups || []).find((s) => s.timeframe === chartTf);
+  if ((!data || data.action === "HOLD") && !chartSetup) {
     el.className = "trade-plan empty";
     const blocked = lc?.risk_blocks?.length
       ? `Риск: ${lc.risk_blocks.join(", ")}`
       : "HOLD — ждём сигнал или согласованность ТФ";
     el.textContent = `Нет сделки — ${blocked}`;
     return;
+  }
+  if (data?.action === "HOLD" && chartSetup) {
+    data = {
+      ...data,
+      action: chartSetup.action,
+      entry: chartSetup.entry,
+      stop_loss: chartSetup.stop_loss,
+      take_profit: chartSetup.take_profit,
+      horizon_label: chartSetup.label,
+      reason: `На ${chartSetup.label}: ${chartSetup.reason} (MTF: HOLD)`,
+    };
   }
 
   const sizeUsdt =
@@ -630,8 +710,9 @@ function renderTraderBriefing(briefing, overview) {
       const cls = biasClass[row.bias] || "bias-flat";
       const biasLabel =
         { bullish: "Бычий", bearish: "Медвежий", neutral: "Нейтральный" }[row.bias] || row.bias;
-      return `<tr class="${cls}">
-        <td>${escapeHtml(tierLabel[row.tier] || "")} · ${escapeHtml(row.label)}</td>
+      const chartMark = row.is_chart_tf ? ' <strong class="chart-tf-mark">← график</strong>' : "";
+      return `<tr class="${cls}${row.is_chart_tf ? " chart-tf-row" : ""}">
+        <td>${escapeHtml(tierLabel[row.tier] || "")} · ${escapeHtml(row.label)}${chartMark}</td>
         <td>${biasLabel}</td>
         <td>${escapeHtml(row.reason || "")}</td>
         <td class="num">${fmt(row.close)}</td>
@@ -653,7 +734,8 @@ function renderTraderBriefing(briefing, overview) {
         </dl>
       </div>`;
   } else {
-    planHtml = '<p class="brief-hold">Сейчас без входа — бот ждёт согласованности по таймфреймам или лучшей точки.</p>';
+    const chartLbl = b.chart_timeframe_label || tfLabel(selectedChartTimeframe());
+    planHtml = `<p class="brief-hold">MTF: без входа. Смотрите уклон на <strong>${escapeHtml(chartLbl)}</strong> в таблице (строка «← график»).</p>`;
   }
 
   const topDown =
@@ -894,14 +976,17 @@ function updateBotBadges(bot, candleSource) {
 function populateTimeframes(timeframes, labels) {
   const sel = $("timeframeSelect");
   if (!sel) return;
+  const prev = sel.value;
   sel.innerHTML = "";
-  (timeframes || ["1", "5", "60"]).forEach((tf, i) => {
+  const list = timeframes || ["1", "5", "15", "30", "60", "240", "D"];
+  list.forEach((tf) => {
     const opt = document.createElement("option");
     opt.value = tf;
     opt.textContent = (labels && labels[tf]) || tfLabel(tf);
-    if (i === 1 || tf === "5") opt.selected = true;
     sel.appendChild(opt);
   });
+  if (prev && list.includes(prev)) sel.value = prev;
+  else if (!sel.value && list.includes("5")) sel.value = "5";
 }
 
 async function loadRatioSection() {
@@ -1115,14 +1200,21 @@ async function refreshChartOnly() {
     updateTradeLevelsPanel(chartData, overview);
     updateChartChrome(chartData, symbol, timeframe);
     renderMainChart(chartData, symbol, timeframe);
+    if (chartData.trader_briefing) {
+      renderTraderBriefing(chartData.trader_briefing, lastOverview);
+    }
+    if (chartData.price_note) {
+      updatePriceContextBanner({ price_note: chartData.price_note }, chartData.price_info);
+    }
     if (lastOverview) {
       renderTradePlan(
-        chartData.trade_plan || lastOverview.trade_plan,
+        resolvePlanForChart(chartData.trade_plan || lastOverview.trade_plan),
         lastOverview.signal,
         lastOverview.trading_params,
         lastOverview.last_cycle_decisions
       );
     }
+    renderTfSetups(chartData.trade_plan || lastOverview?.trade_plan);
     showApiError("");
     setStatusHint("");
   } catch (e) {
@@ -1263,14 +1355,15 @@ function bindControls() {
     filterSymbolOptions(e.target.value);
   });
   $("symbolSelect")?.addEventListener("change", () => {
-    lastChartKey = "";
+    tvChartKey = "";
     lastLivePlan = null;
     lastOverview = null;
     startLivePricePoll();
     refreshAll();
   });
   $("timeframeSelect")?.addEventListener("change", () => {
-    lastChartKey = "";
+    tvChartKey = "";
+    lastLivePlan = null;
     if (tfChangeTimer) clearTimeout(tfChangeTimer);
     tfChangeTimer = setTimeout(() => {
       startLivePricePoll();

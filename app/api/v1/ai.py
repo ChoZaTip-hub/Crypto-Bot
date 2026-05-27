@@ -66,7 +66,10 @@ async def ai_analyze(
     if not analyst.available:
         raise HTTPException(
             status_code=400,
-            detail="AI_ENABLED=true и AI_API_KEY в .env (OpenAI или совместимый API)",
+            detail=(
+                "AI_ENABLED=true и ключ в .env: OPENAI_API_KEY=sk-… "
+                "или AI_API_KEY=sk-… (после правок перезапустите сервер)"
+            ),
         )
 
     indicators_by_tf = await _load_indicators(session, symbol, timeframe)
