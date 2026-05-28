@@ -723,6 +723,79 @@ select {
 .risk-ok { color: var(--green); }
 .risk-block { color: var(--red); }
 
+.auto-symbol-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.opportunities-wrap {
+  margin-top: 0.6rem;
+  max-width: 420px;
+}
+
+.opportunities-title {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.opportunities-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.opp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.opp-chip:hover {
+  border-color: var(--accent);
+}
+
+.opp-chip.active {
+  border-color: var(--accent);
+  background: #1e3a5f;
+}
+
+.opp-chip.executed {
+  border-color: var(--green);
+}
+
+.opp-sym { font-weight: 600; }
+
+.opp-act.buy { color: var(--green); }
+.opp-act.sell { color: var(--red); }
+
+.opp-score {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.opp-badge {
+  color: var(--amber);
+  font-size: 0.65rem;
+}
+
+.symbol-picker select option.opportunity-top {
+  font-weight: 600;
+}
+
 .footer {
   text-align: center;
   padding: 1rem;

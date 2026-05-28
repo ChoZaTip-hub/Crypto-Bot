@@ -3,11 +3,14 @@
 import asyncio
 from datetime import datetime, timezone
 
+from contextlib import asynccontextmanager
+
 from sqlalchemy.exc import OperationalError
 
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.db.session import DatabaseSessionManager
+from app.db.sqlite_lock import sqlite_write_lock
 from app.services.bot_orchestrator import BotOrchestrator
 
 logger = get_logger(__name__)
@@ -24,6 +27,8 @@ class BotManager:
         self._last_run_at: str | None = None
         self._last_error: str | None = None
         self._last_result: dict | None = None
+        self._cycle_lock = asyncio.Lock()
+        self._is_sqlite = db_manager._is_sqlite
 
     @property
     def is_running(self) -> bool:
@@ -78,22 +83,36 @@ class BotManager:
             first = False
 
     async def _execute_cycle(self) -> dict:
-        last_exc: Exception | None = None
-        for attempt in range(5):
-            try:
-                factory = self._db_manager.session_factory()
-                async with factory() as session:
-                    orchestrator = BotOrchestrator(session, self._settings)
-                    result = await orchestrator.run_pipeline()
-                    await session.commit()
-                self._last_run_at = datetime.now(timezone.utc).isoformat()
-                self._last_error = None
-                self._last_result = result
-                return result
-            except OperationalError as exc:
-                last_exc = exc
-                if "locked" not in str(exc).lower():
-                    raise
-                await asyncio.sleep(0.3 * (attempt + 1))
-        assert last_exc is not None
-        raise last_exc
+        async with self._cycle_lock:
+            ctx = sqlite_write_lock() if self._is_sqlite else _noop_lock()
+            async with ctx:
+                last_exc: Exception | None = None
+                for attempt in range(8):
+                    factory = self._db_manager.session_factory()
+                    session = factory()
+                    try:
+                        orchestrator = BotOrchestrator(session, self._settings)
+                        result = await orchestrator.run_pipeline()
+                        await session.commit()
+                        self._last_run_at = datetime.now(timezone.utc).isoformat()
+                        self._last_error = None
+                        self._last_result = result
+                        return result
+                    except OperationalError as exc:
+                        await session.rollback()
+                        last_exc = exc
+                        if "locked" not in str(exc).lower():
+                            raise
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                    except Exception:
+                        await session.rollback()
+                        raise
+                    finally:
+                        await session.close()
+                assert last_exc is not None
+                raise last_exc
+
+
+@asynccontextmanager
+async def _noop_lock():
+    yield

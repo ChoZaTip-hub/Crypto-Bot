@@ -56,7 +56,15 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - График свечей Bybit + TradingView + уровни Entry/SL/TP
 - Сигналы, индикаторы, обучение, риск, audit
 
-### 6. Health check
+### 6. Autonomous scanner & multi-account
+
+See [docs/AUTONOMOUS_TRADING.md](docs/AUTONOMOUS_TRADING.md).
+
+- `SCANNER_ENABLED=true` — bot ranks Bybit USDT pairs and trades top scores overnight.
+- `POST /api/v1/accounts` — add copy-trading accounts (each with own API keys and `order_usdt`).
+- `GET /api/v1/scanner/status` — last scan results.
+
+### 7. Health check
 
 ```bash
 curl http://localhost:8000/api/v1/health

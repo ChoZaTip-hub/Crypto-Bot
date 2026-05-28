@@ -2,6 +2,7 @@
 
 from app.core.constants import SignalAction
 from app.strategies.base import BaseStrategy, StrategyInputs, StrategySignal
+from app.strategies.levels import compute_sl_tp, risk_reward_ratio
 
 
 class TrendStrategy(BaseStrategy):
@@ -29,9 +30,10 @@ class TrendStrategy(BaseStrategy):
         elif adx <= 25:
             reason_parts.append("слабый тренд (ADX≤25)")
 
-        stop = close - 2 * atr if action == SignalAction.BUY else close + 2 * atr if action == SignalAction.SELL else None
-        tp = close + 3 * atr if action == SignalAction.BUY else close - 3 * atr if action == SignalAction.SELL else None
-        rr = 1.5 if stop and tp else None
+        stop, tp = (
+            compute_sl_tp(action, close, atr) if action != SignalAction.HOLD and atr > 0 else (None, None)
+        )
+        rr = risk_reward_ratio(close, stop, tp) if stop and tp else None
 
         return StrategySignal(
             symbol=inputs.symbol,

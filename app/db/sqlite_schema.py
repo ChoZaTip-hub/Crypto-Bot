@@ -11,6 +11,8 @@ logger = get_logger(__name__)
 _SQLITE_COLUMN_PATCHES: tuple[tuple[str, str, str], ...] = (
     ("positions", "entry_explanation", "TEXT"),
     ("positions", "exit_explanation", "TEXT"),
+    ("positions", "account_id", "INTEGER DEFAULT 1"),
+    ("orders", "account_id", "INTEGER DEFAULT 1"),
 )
 
 

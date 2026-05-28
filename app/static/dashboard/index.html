@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Crypto Trading Bot — Панель управления</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=21" />
+  <link rel="stylesheet" href="/assets/styles.css?v=22" />
 </head>
 <body>
   <header class="topbar">
@@ -29,6 +29,14 @@
       <input type="search" id="symbolFilter" placeholder="Поиск: BTC, BNB, SOL…" autocomplete="off" />
       <select id="symbolSelect" size="1"></select>
       <p id="symbolCountHint" class="hint"></p>
+      <label class="auto-symbol-toggle">
+        <input type="checkbox" id="autoSymbolFollow" checked />
+        Авто: график на лучший сигнал бота
+      </label>
+      <div class="opportunities-wrap">
+        <p class="opportunities-title">Лучшие монеты (сканер + цикл)</p>
+        <div id="opportunitiesPanel" class="opportunities-panel"></div>
+      </div>
     </div>
     <div class="control-group">
       <label>Таймфрейм</label>
@@ -189,6 +197,6 @@
   </main>
 
   <footer class="footer">API: <a href="/docs" target="_blank">/docs</a></footer>
-  <script src="/assets/app.js?v=28"></script>
+  <script src="/assets/app.js?v=31"></script>
 </body>
 </html>

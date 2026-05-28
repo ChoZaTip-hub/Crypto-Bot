@@ -30,6 +30,7 @@ class ExecutionService:
         paper_exchange: ExchangeBase,
         settings: Settings,
         audit: AuditService,
+        account_id: int = 1,
     ) -> None:
         self._order_repo = OrderRepository(session)
         self._fill_repo = FillRepository(session)
@@ -38,6 +39,7 @@ class ExecutionService:
         self._paper = paper_exchange
         self._settings = settings
         self._audit = audit
+        self._account_id = account_id
 
     def _active_exchange(self) -> ExchangeBase:
         return self._exchange if self._settings.is_live_trading else self._paper
@@ -66,6 +68,7 @@ class ExecutionService:
 
         order = await self._order_repo.create_order(
             {
+                "account_id": self._account_id,
                 "order_id": order_id,
                 "correlation_id": signal.correlation_id,
                 "symbol": signal.symbol,
@@ -130,7 +133,8 @@ class ExecutionService:
                     "opened_at": utc_now(),
                     "correlation_id": signal.correlation_id,
                     "entry_explanation": signal.explanation or signal.reason,
-                }
+                },
+                account_id=self._account_id,
             )
             await self._audit.log(
                 AuditEventType.ORDER_PLACED,

@@ -20,7 +20,8 @@ def _configure_sqlite(engine: AsyncEngine) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA busy_timeout=60000")
+        cursor.execute("PRAGMA wal_autocheckpoint=1000")
         cursor.close()
 
 
@@ -35,7 +36,7 @@ class DatabaseSessionManager:
     def init_engine(self) -> None:
         kwargs: dict = {"echo": self._echo}
         if self._is_sqlite:
-            kwargs["connect_args"] = {"timeout": 30}
+            kwargs["connect_args"] = {"timeout": 60}
             kwargs["poolclass"] = NullPool
         else:
             kwargs["pool_pre_ping"] = True

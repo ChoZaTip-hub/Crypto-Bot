@@ -2,6 +2,7 @@
 
 from app.core.constants import SignalAction
 from app.strategies.base import BaseStrategy, StrategyInputs, StrategySignal
+from app.strategies.levels import compute_sl_tp, risk_reward_ratio
 
 
 class MeanReversionStrategy(BaseStrategy):
@@ -33,8 +34,10 @@ class MeanReversionStrategy(BaseStrategy):
         else:
             reason += f"; стратегия флэта не активна (режим {inputs.regime})"
 
-        stop = close - 1.5 * atr if action == SignalAction.BUY else close + 1.5 * atr if action == SignalAction.SELL else None
-        tp = close + 2 * atr if action == SignalAction.BUY else close - 2 * atr if action == SignalAction.SELL else None
+        stop, tp = (
+            compute_sl_tp(action, close, atr) if action != SignalAction.HOLD and atr > 0 else (None, None)
+        )
+        rr = risk_reward_ratio(close, stop, tp) if stop and tp else None
 
         return StrategySignal(
             symbol=inputs.symbol,
@@ -45,6 +48,7 @@ class MeanReversionStrategy(BaseStrategy):
             entry_price=close if action != SignalAction.HOLD else None,
             stop_loss=stop,
             take_profit=tp,
+            risk_reward_ratio=rr,
             strategy_name=self.name,
             strategy_version=self.version,
         )

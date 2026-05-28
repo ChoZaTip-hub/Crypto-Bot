@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    accounts,
     admin,
     ai,
     backtests,
@@ -16,6 +17,7 @@ from app.api.v1 import (
     positions,
     ratio_swaps,
     risk,
+    scanner,
     signals,
 )
 
@@ -24,6 +26,8 @@ api_router.include_router(health.router)
 api_router.include_router(ai.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(bot.router)
+api_router.include_router(scanner.router)
+api_router.include_router(accounts.router)
 api_router.include_router(memory.router)
 api_router.include_router(learning.router)
 api_router.include_router(market.router)

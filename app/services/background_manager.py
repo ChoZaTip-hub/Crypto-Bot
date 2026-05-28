@@ -8,6 +8,7 @@ from sqlalchemy.exc import OperationalError
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.db.session import DatabaseSessionManager
+from app.db.sqlite_lock import sqlite_write_lock
 from app.services.audit_service import AuditService
 from app.services.position_monitor_service import PositionMonitorService
 from app.services.ratio_swap_service import RatioSwapService
@@ -29,6 +30,7 @@ class BackgroundManager:
         self._last_ratio_at: str | None = None
         self._last_ratio_proposals: list | None = None
         self._last_error: str | None = None
+        self._is_sqlite = db_manager._is_sqlite
 
     @property
     def is_running(self) -> bool:
@@ -72,12 +74,15 @@ class BackgroundManager:
 
     async def _position_loop(self) -> None:
         while self._running:
+            closed: list = []
             try:
-                factory = self._db_manager.session_factory()
-                async with factory() as session:
-                    monitor = PositionMonitorService(session, self._settings)
-                    closed = await monitor.tick()
-                    await session.commit()
+                ctx = sqlite_write_lock() if self._is_sqlite else _null_context()
+                async with ctx:
+                    factory = self._db_manager.session_factory()
+                    async with factory() as session:
+                        monitor = PositionMonitorService(session, self._settings)
+                        closed = await monitor.tick()
+                        await session.commit()
                 self._last_position_at = datetime.now(timezone.utc).isoformat()
                 self._last_position_closed = closed
                 self._last_error = None
@@ -86,6 +91,7 @@ class BackgroundManager:
             except OperationalError as exc:
                 self._last_error = str(exc)
                 logger.warning("background_position_db_locked", error=str(exc))
+                await asyncio.sleep(1.0)
             except Exception as exc:
                 self._last_error = str(exc)
                 logger.error("background_position_error", error=str(exc))
@@ -94,11 +100,13 @@ class BackgroundManager:
     async def _ratio_loop(self) -> None:
         while self._running:
             try:
-                factory = self._db_manager.session_factory()
-                async with factory() as session:
-                    svc = RatioSwapService(session, self._settings, AuditService(session))
-                    proposals = await svc.scan_and_propose()
-                    await session.commit()
+                ctx = sqlite_write_lock() if self._is_sqlite else _null_context()
+                async with ctx:
+                    factory = self._db_manager.session_factory()
+                    async with factory() as session:
+                        svc = RatioSwapService(session, self._settings, AuditService(session))
+                        proposals = await svc.scan_and_propose()
+                        await session.commit()
                 self._last_ratio_at = datetime.now(timezone.utc).isoformat()
                 self._last_ratio_proposals = proposals
                 self._last_error = None
@@ -111,3 +119,11 @@ class BackgroundManager:
                 self._last_error = str(exc)
                 logger.error("background_ratio_error", error=str(exc))
             await asyncio.sleep(self._settings.ratio_monitor_interval_seconds)
+
+
+class _null_context:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *args):
+        return False

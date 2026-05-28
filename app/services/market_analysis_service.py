@@ -137,6 +137,7 @@ class MarketAnalysisService:
         *,
         live_price: float | None = None,
         chart_timeframe: str = "5",
+        order_usdt: float | None = None,
     ) -> dict[str, Any]:
         per_tf: list[dict[str, Any]] = []
         bull_w = bear_w = 0.0
@@ -206,6 +207,14 @@ class MarketAnalysisService:
             trade_block["reward_pct"] = round(abs(_pnl_pct(entry, tp, is_long) or 0), 2)
             trade_block["reward_pct_signed"] = round(_pnl_pct(entry, tp, is_long) or 0, 2)
             trade_block["risk_pct_signed"] = round(_pnl_pct(entry, sl, is_long) or 0, 2)
+            if order_usdt and order_usdt > 0:
+                from app.strategies.levels import estimate_fixed_usdt_pnl
+
+                pnl = estimate_fixed_usdt_pnl(entry, sl, tp, order_usdt)
+                if pnl:
+                    trade_block["pnl_estimate"] = pnl
+                    if pnl.get("risk_reward_ratio"):
+                        trade_block["risk_reward"] = pnl["risk_reward_ratio"]
 
         regime = inputs.regime or "unknown"
         headline = self._headline(action, signal.confidence, regime, mtf_verdict, edge)
@@ -230,8 +239,8 @@ class MarketAnalysisService:
             "chart_timeframe": chart_timeframe,
             "chart_timeframe_label": label_for_timeframe(chart_timeframe),
             "data_note": (
-                f"Вход / SL / TP — от цены Bybit и ATR ({label_for_timeframe(chart_timeframe)}), "
-                "таймфрейм графика. В таблице — закрытие последней свечи по каждому ТФ."
+                f"Вход / SL / TP — ATR на {label_for_timeframe(chart_timeframe)} "
+                "(SL ближе, TP дальше; цель R:R ≥ 1:2). В таблице — закрытие свечи по ТФ."
             ),
         }
 
@@ -352,6 +361,11 @@ class MarketAnalysisService:
                 ]
             )
             if trade.get("risk_reward"):
-                lines.append(f"  Risk/Reward: {trade['risk_reward']:.2f}")
+                lines.append(f"  Risk/Reward: 1:{float(trade['risk_reward']):.2f}")
+            pnl = trade.get("pnl_estimate") or {}
+            if pnl.get("risk_usdt") is not None and pnl.get("reward_usdt") is not None:
+                lines.append(
+                    f"  ~USDT при фикс. размере: −{pnl['risk_usdt']} / +{pnl['reward_usdt']}"
+                )
         lines.extend(["", briefing.get("data_note", "")])
         return "\n".join(lines)

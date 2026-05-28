@@ -50,12 +50,10 @@ class MarketDataService:
             self._settings.timeframes,
         )
 
-    async def ingest_cycle(self) -> dict[str, int]:
+    async def ingest_cycle(self, symbols: list[str] | None = None) -> dict[str, int]:
         """Light ingest for bot loop (fewer API calls)."""
-        return await self._ingest_pairs(
-            self._settings.symbol_whitelist,
-            self._settings.bot_cycle_timeframes,
-        )
+        syms = symbols or self._settings.symbol_whitelist
+        return await self._ingest_pairs(syms, self._settings.bot_cycle_timeframes)
 
     async def ingest_symbol_tf(self, symbol: str, timeframe: str) -> dict[str, int]:
         key = f"{symbol}:{timeframe}"
@@ -63,8 +61,11 @@ class MarketDataService:
         return {key: count}
 
     async def _ingest_pairs(self, symbols: list[str], timeframes: list[str]) -> dict[str, int]:
-        """Sequential ingest — one shared DB session cannot run parallel writes."""
+        """Sequential ingest; commit per symbol on SQLite to avoid long locks."""
         results: dict[str, int] = {}
+        session = self._candle_repo._session
+        is_sqlite = str(session.get_bind().dialect.name) == "sqlite"
+
         for symbol in symbols:
             for tf in timeframes:
                 key = f"{symbol}:{tf}"
@@ -73,6 +74,12 @@ class MarketDataService:
                 except Exception as exc:
                     logger.warning("ingest_failed", key=key, error=str(exc))
                     results[key] = 0
+            if is_sqlite:
+                try:
+                    await session.commit()
+                except Exception as exc:
+                    logger.warning("ingest_commit_failed", symbol=symbol, error=str(exc))
+                    await session.rollback()
         return results
 
     async def on_candle(self, candle: CandleData) -> None:

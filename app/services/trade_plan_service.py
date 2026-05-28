@@ -12,7 +12,13 @@ from app.services.audit_service import AuditService
 from app.services.live_price_service import fetch_display_price
 from app.services.setup_scanner import enrich_plan_with_setups, scan_timeframe_setups
 from app.strategies.base import StrategyInputs, StrategySignal
-from app.strategies.levels import apply_live_trade_levels, pick_atr
+from app.strategies.levels import (
+    SlTpMultipliers,
+    apply_live_trade_levels,
+    estimate_fixed_usdt_pnl,
+    pick_atr,
+    risk_reward_ratio,
+)
 from app.strategies.multi_timeframe_strategy import MultiTimeframeStrategy
 
 
@@ -124,6 +130,17 @@ async def build_fresh_trade_plan(
                 return fb
         return chart_timeframe
 
+    level_mults = SlTpMultipliers.from_settings(settings)
+
+    def _attach_pnl_hints(plan: dict[str, Any]) -> None:
+        entry = float(plan.get("entry") or live_price or 0)
+        sl, tp = plan.get("stop_loss"), plan.get("take_profit")
+        if entry > 0 and sl and tp:
+            plan["risk_reward_ratio"] = risk_reward_ratio(entry, sl, tp)
+            pnl = estimate_fixed_usdt_pnl(entry, sl, tp, settings.order_usdt)
+            if pnl:
+                plan["pnl_estimate"] = pnl
+
     def _finalize(plan: dict[str, Any], regime: str | None = None) -> dict[str, Any]:
         nonlocal last_regime
         last_regime = regime
@@ -131,7 +148,9 @@ async def build_fresh_trade_plan(
         plan["live_price"] = live_price
         plan["chart_timeframe"] = chart_timeframe
         plan["chart_timeframe_label"] = label_for_timeframe(chart_timeframe)
-        setups = scan_timeframe_setups(symbol, indicators_by_tf, live_price)
+        setups = scan_timeframe_setups(
+            symbol, indicators_by_tf, live_price, mults=level_mults
+        )
         plan = enrich_plan_with_setups(plan, setups)
         chart_setup = next((s for s in setups if s["timeframe"] == chart_timeframe), None)
         if chart_setup:
@@ -151,9 +170,11 @@ async def build_fresh_trade_plan(
                 live_price,
                 indicators_by_tf,
                 horizon_tf=display_tf,
+                mults=level_mults,
             )
             plan["stop_loss"] = sig.stop_loss
             plan["take_profit"] = sig.take_profit
+            plan["risk_reward_ratio"] = sig.risk_reward_ratio
             plan["horizon_tf"] = display_tf
             plan["horizon_label"] = label_for_timeframe(display_tf)
             plan["atr"] = pick_atr(indicators_by_tf, prefer_tf=display_tf)
@@ -171,8 +192,10 @@ async def build_fresh_trade_plan(
         tf_lbl = label_for_timeframe(display_tf if plan.get("action") in ("BUY", "SELL") else chart_timeframe)
         plan["analysis_note"] = (
             f"{symbol}: цена Bybit {live_price:,.2f} · график {tf_lbl}. "
-            f"Вход/SL/TP — ATR выбранного ТФ. MTF: {plan.get('action')} — {plan.get('reason', '')[:80]}"
+            f"Вход/SL/TP — ATR×{level_mults.sl_atr}/{level_mults.tp_atr} ({tf_lbl}). "
+            f"MTF: {plan.get('action')} — {plan.get('reason', '')[:80]}"
         )
+        _attach_pnl_hints(plan)
         return plan
 
     async def _done(plan: dict[str, Any]) -> dict[str, Any]:
@@ -231,7 +254,11 @@ async def build_fresh_trade_plan(
     inputs.regime = mtf._detect_regime(inputs)
     bundle = await mtf.decide_detailed(inputs)
     signal = apply_live_trade_levels(
-        bundle.signal, live_price, indicators_by_tf, horizon_tf=chart_tf
+        bundle.signal,
+        live_price,
+        indicators_by_tf,
+        horizon_tf=chart_tf,
+        mults=level_mults,
     )
     atr = pick_atr(indicators_by_tf, prefer_tf=chart_tf)
     analyzed_tfs = sorted(indicators_by_tf.keys(), key=lambda x: (len(x), x))

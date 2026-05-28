@@ -21,6 +21,7 @@ class RiskService:
         settings: Settings,
         audit: AuditService,
         market_data: MarketDataService,
+        account_id: int = 1,
     ) -> None:
         self._manager = RiskManager(settings)
         self._position_repo = PositionRepository(session)
@@ -28,6 +29,7 @@ class RiskService:
         self._audit = audit
         self._market_data = market_data
         self._settings = settings
+        self._account_id = account_id
 
     async def evaluate(
         self,
@@ -39,7 +41,7 @@ class RiskService:
         *,
         timeframes: dict[str, dict] | None = None,
     ) -> RiskAssessment:
-        positions = await self._position_repo.get_open_positions()
+        positions = await self._position_repo.get_open_positions(self._account_id)
         open_for_symbol = next((p for p in positions if p.symbol == signal.symbol), None)
         symbol_exposure = 0.0
         if equity > 0:

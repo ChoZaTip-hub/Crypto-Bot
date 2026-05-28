@@ -9,15 +9,21 @@ from app.risk.drawdown import DrawdownTracker
 
 
 class PortfolioService:
-    def __init__(self, session: AsyncSession, settings: Settings) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        account_id: int = 1,
+    ) -> None:
         self._portfolio_repo = PortfolioRepository(session)
         self._position_repo = PositionRepository(session)
         self._settings = settings
+        self._account_id = account_id
         self._drawdown = DrawdownTracker()
         self._daily_pnl_pct = 0.0
 
     async def snapshot(self) -> dict:
-        positions = await self._position_repo.get_open_positions()
+        positions = await self._position_repo.get_open_positions(self._account_id)
         cash = self._settings.paper_initial_balance
         unrealized = sum(p.unrealized_pnl for p in positions)
         equity = cash + unrealized

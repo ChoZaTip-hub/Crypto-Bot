@@ -25,8 +25,9 @@ from app.services.live_price_service import fetch_display_price
 from app.services.market_data_service import MarketDataService
 from app.services.symbol_universe import resolve_dashboard_symbols
 from app.services.trade_plan_service import build_fresh_trade_plan, build_quick_live_plan
-from app.strategies.levels import apply_live_trade_levels
+from app.strategies.levels import SlTpMultipliers, apply_live_trade_levels
 from app.utils.candles import filter_price_outliers
+from app.services.trading_opportunities import build_trading_opportunities
 from app.utils.risk_labels import explain_risk_blocks
 
 logger = get_logger(__name__)
@@ -138,9 +139,10 @@ def _price_note_ru(settings: Settings, info: dict, chart_timeframe: str = "5") -
     if not settings.use_bybit_market_data:
         return "Демо-данные, не Bybit."
     tf_lbl = label_for_timeframe(chart_timeframe)
+    m = SlTpMultipliers.from_settings(settings)
     return (
-        f"Вход / SL / TP — от цены Bybit и ATR ({tf_lbl}), таймфрейм графика. "
-        "Не из старых записей в базе."
+        f"Вход / SL / TP — Bybit + ATR×{m.sl_atr} (SL) / ×{m.tp_atr} (TP) на {tf_lbl}. "
+        f"Минимум R:R 1:{m.min_rr:.0f}. При фикс. размере сделки убыток/прибыль в USDT пропорциональны этим уровням."
     )
 
 
@@ -277,9 +279,19 @@ async def dashboard_overview(
                 stop_loss=fresh_plan.get("stop_loss"),
                 take_profit=fresh_plan.get("take_profit"),
             )
-            apply_live_trade_levels(sig, live_px or 0, indicators_all_tf, horizon_tf=timeframe)
+            apply_live_trade_levels(
+                sig,
+                live_px or 0,
+                indicators_all_tf,
+                horizon_tf=timeframe,
+                mults=SlTpMultipliers.from_settings(settings),
+            )
             trader_briefing = analysis.build_briefing(
-                inputs, sig, live_price=live_px, chart_timeframe=timeframe
+                inputs,
+                sig,
+                live_price=live_px,
+                chart_timeframe=timeframe,
+                order_usdt=settings.order_usdt,
             )
 
         price_info = await _resolve_display_price(symbol, settings, candle_close)
@@ -335,6 +347,7 @@ async def dashboard_overview(
                 _decision_dict(d) for d in await decision_repo.get_recent_by_symbol(symbol, 8)
             ],
             "last_cycle_decisions": _last_cycle_decisions(manager),
+            "trading_opportunities": build_trading_opportunities(manager.last_result),
             "trading_params": {
                 "position_size_mode": settings.position_size_mode,
                 "order_usdt": settings.order_usdt,
@@ -495,9 +508,19 @@ async def chart_data(
                 stop_loss=trade_plan.get("stop_loss"),
                 take_profit=trade_plan.get("take_profit"),
             )
-            apply_live_trade_levels(sig, live_px or 0, indicators_by_tf, horizon_tf=timeframe)
+            apply_live_trade_levels(
+                sig,
+                live_px or 0,
+                indicators_by_tf,
+                horizon_tf=timeframe,
+                mults=SlTpMultipliers.from_settings(settings),
+            )
             trader_briefing = analysis.build_briefing(
-                inputs, sig, live_price=live_px, chart_timeframe=timeframe
+                inputs,
+                sig,
+                live_price=live_px,
+                chart_timeframe=timeframe,
+                order_usdt=settings.order_usdt,
             )
 
         trade_levels: list[dict] = []

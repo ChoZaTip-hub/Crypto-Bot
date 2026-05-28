@@ -4,17 +4,20 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.account_context import DEFAULT_ACCOUNT_ID
 from app.core.config import Settings
 from app.core.constants import AuditEventType, SignalAction
 from app.core.logging import get_logger
 from app.exchanges.bybit_client import BybitClient
 from app.exchanges.mock_exchange import MockExchange
 from app.services.audit_service import AuditService
+from app.services.execution_router import ExecutionRouter
 from app.services.execution_service import ExecutionService
 from app.services.market_data_service import MarketDataService
 from app.services.portfolio_service import PortfolioService
 from app.services.risk_service import RiskService
 from app.services.strategy_service import StrategyService
+from app.services.trading_universe_service import TradingUniverseService
 
 logger = get_logger(__name__)
 
@@ -39,11 +42,15 @@ class BotOrchestrator:
         self._strategy = StrategyService(
             session, self._audit, settings.timeframes, settings=settings
         )
-        self._risk = RiskService(session, settings, self._audit, self._market)
-        self._execution = ExecutionService(
-            session, self._bybit, self._paper, settings, self._audit
+        self._risk = RiskService(
+            session, settings, self._audit, self._market, account_id=DEFAULT_ACCOUNT_ID
         )
-        self._portfolio = PortfolioService(session, settings)
+        self._execution = ExecutionService(
+            session, self._bybit, self._paper, settings, self._audit, account_id=DEFAULT_ACCOUNT_ID
+        )
+        self._router = ExecutionRouter(session, settings, self._audit, self._market, self._paper)
+        self._portfolio = PortfolioService(session, settings, account_id=DEFAULT_ACCOUNT_ID)
+        self._universe = TradingUniverseService(session, settings)
         self._paper_connected = False
 
     @property
@@ -56,21 +63,24 @@ class BotOrchestrator:
             self._paper_connected = True
 
     async def run_pipeline(self) -> dict[str, Any]:
-        """Full cycle: market → indicators → signal + explanation → risk → execution."""
+        """Full cycle: scan universe → ingest → signals → fan-out execution."""
         await self._ensure_paper()
-        market_counts = await self._market.ingest_cycle()
+        symbols, scan_snap = await self._universe.resolve()
+        if not symbols:
+            symbols = list(self._settings.symbol_whitelist)
+
+        market_counts = await self._market.ingest_cycle(symbols)
+        await self._session.commit()
         portfolio = await self._portfolio.snapshot()
         results: list[dict[str, Any]] = []
 
-        for symbol in self._settings.symbol_whitelist:
+        for symbol in symbols:
             inputs, bundle, _ = await self._strategy.analyze_symbol(symbol)
             if self._settings.ai_influence_trades and self._settings.ai_enabled:
                 from app.services.ai.integration import apply_ai_to_signal
 
                 chart_tf = (
-                    self._settings.timeframes[0]
-                    if self._settings.timeframes
-                    else "5"
+                    self._settings.timeframes[0] if self._settings.timeframes else "5"
                 )
                 bundle.signal = await apply_ai_to_signal(
                     self._settings,
@@ -87,9 +97,17 @@ class BotOrchestrator:
             )
             signal = await self._strategy.finalize_and_persist(inputs, bundle, risk=risk)
 
-            order = None
+            orders: list[dict] = []
             if signal.action != SignalAction.HOLD and risk.allowed:
-                order = await self._execution.execute(signal, risk)
+                if self._settings.multi_account_copy_enabled:
+                    fan = await self._router.execute_for_all_accounts(
+                        signal, risk, timeframes=inputs.timeframes
+                    )
+                    orders = [f for f in fan if f.get("ok")]
+                else:
+                    single = await self._execution.execute(signal, risk)
+                    if single:
+                        orders = [{"account_id": DEFAULT_ACCOUNT_ID, "order": single}]
             elif signal.action != SignalAction.HOLD and not risk.allowed:
                 await self._audit.log(
                     AuditEventType.RISK_BLOCK,
@@ -106,7 +124,7 @@ class BotOrchestrator:
                 symbol=symbol,
                 action=signal.action.value,
                 risk=risk,
-                order=order,
+                orders=orders,
             )
             results.append(
                 {
@@ -124,15 +142,33 @@ class BotOrchestrator:
                     "risk_blocks": risk.blocks,
                     "suggested_qty": risk.suggested_qty,
                     "suggested_usdt": risk.suggested_usdt,
-                    "order": order,
+                    "orders": orders,
                     "activity": activity,
                 }
             )
+
+        scan_payload: dict[str, Any] | None = None
+        if scan_snap:
+            scan_payload = {
+                "top_symbols": scan_snap.top_symbols,
+                "candidates_checked": scan_snap.candidates_checked,
+                "ranked": [
+                    {
+                        "symbol": r.symbol,
+                        "score": r.score,
+                        "action": r.action,
+                        "reason": r.reason[:80],
+                    }
+                    for r in scan_snap.ranked[:15]
+                ],
+            }
 
         return {
             "market_ingested": market_counts,
             "portfolio": portfolio,
             "decisions": results,
+            "trading_universe": symbols,
+            "scanner": scan_payload,
             "market_source": "bybit" if self._settings.use_bybit_market_data else "mock",
             "trading_params": _trading_params_snapshot(self._settings),
         }
@@ -146,6 +182,8 @@ def _trading_params_snapshot(settings: Settings) -> dict:
         "max_risk_per_trade": settings.max_risk_per_trade,
         "trading_mode": settings.trading_mode.value,
         "paper_initial_balance": settings.paper_initial_balance,
+        "scanner_enabled": settings.scanner_enabled,
+        "multi_account_copy": settings.multi_account_copy_enabled,
     }
 
 
@@ -154,24 +192,20 @@ def _cycle_activity_message(
     symbol: str,
     action: str,
     risk,
-    order: dict | None,
+    orders: list[dict] | None,
 ) -> str:
     if action == "HOLD":
         return f"{symbol}: без сделки (HOLD) — нет согласованного сигнала"
-    if order:
-        qty = order.get("qty") or order.get("filled_qty")
-        px = order.get("fill_price")
-        usdt = order.get("notional_usdt")
-        kind = order.get("order_type", "Market")
-        extra = f", ~{usdt:.0f} USDT" if usdt else ""
+    if orders:
+        n = len(orders)
+        first = orders[0].get("order") or {}
+        qty = first.get("qty") or first.get("filled_qty")
+        px = first.get("fill_price")
         return (
-            f"{symbol}: {action} исполнен ({kind}) — "
-            f"{qty} @ {px}{extra}. Выход по SL/TP — монитор 24/7"
+            f"{symbol}: {action} на {n} счёт(ах) — "
+            f"{qty} @ {px}. SL/TP — монитор 24/7"
         )
     if not risk.allowed:
         blocks = ", ".join(risk.blocks) if risk.blocks else "риск"
         return f"{symbol}: {action} не исполнен — {blocks}"
     return f"{symbol}: {action} — ордер не создан"
-
-    async def run_once(self) -> dict[str, Any]:
-        return await self.run_pipeline()

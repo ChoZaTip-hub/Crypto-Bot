@@ -20,6 +20,8 @@ from app.models.strategy_weight import StrategyWeight
 from app.models.pair_ratio_snapshot import PairRatioSnapshot
 from app.models.ratio_swap_proposal import RatioSwapProposal
 from app.models.asset_holding import AssetHolding
+from app.models.user import User
+from app.models.exchange_account import ExchangeAccount
 
 __all__ = [
     "AuditEvent",
@@ -43,4 +45,6 @@ __all__ = [
     "PairRatioSnapshot",
     "RatioSwapProposal",
     "AssetHolding",
+    "User",
+    "ExchangeAccount",
 ]

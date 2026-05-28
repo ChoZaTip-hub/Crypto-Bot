@@ -145,6 +145,34 @@ class BybitRestClient:
         client = self._get_client()
         return client.get_wallet_balance(accountType="UNIFIED")
 
+    async def fetch_spot_turnover_24h(self) -> dict[str, float]:
+        """24h turnover USDT per symbol (for scanner liquidity filter)."""
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(
+                client.get_tickers,
+                category=self._settings.bybit_category,
+            )
+            if resp.get("retCode") != 0:
+                raise ExchangeError(
+                    f"Tickers error: {resp.get('retMsg')}",
+                    details={"response": resp},
+                )
+            out: dict[str, float] = {}
+            for row in resp.get("result", {}).get("list", []):
+                sym = str(row.get("symbol", "")).upper()
+                if not sym.endswith("USDT"):
+                    continue
+                try:
+                    out[sym] = float(row.get("turnover24h") or row.get("volume24h") or 0)
+                except (TypeError, ValueError):
+                    out[sym] = 0.0
+            return out
+        except ExchangeError:
+            raise
+        except Exception as exc:
+            raise ExchangeError(str(exc)) from exc
+
     async def list_spot_usdt_symbols(self, *, limit: int = 120) -> list[str]:
         """Tradable USDT spot symbols, preferring liquid names first."""
         try:

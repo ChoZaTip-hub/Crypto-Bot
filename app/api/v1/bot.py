@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import BackgroundManagerDep, BotManagerDep, SettingsDep
 from app.core.security import verify_admin_token
 from app.core.timeframes import label_for_timeframe
+from app.services.trading_opportunities import build_trading_opportunities
 from app.schemas.config import (
     BotConfigSchema,
     BotConfigUpdateSchema,
@@ -37,6 +38,7 @@ async def bot_status(
         "bybit_category": settings.bybit_category,
         "trading_params": _trading_params_dict(settings),
         "last_cycle_summary": _last_cycle_summary(manager),
+        "trading_opportunities": build_trading_opportunities(manager.last_result),
     }
 
 
@@ -61,7 +63,8 @@ def _last_cycle_summary(manager) -> list[dict]:
                 "activity": d.get("activity"),
                 "risk_allowed": d.get("risk_allowed"),
                 "risk_blocks": d.get("risk_blocks"),
-                "order": d.get("order"),
+                "order": d.get("order") or (d.get("orders") or [None])[0],
+                "orders": d.get("orders"),
                 "suggested_usdt": d.get("suggested_usdt"),
             }
         )

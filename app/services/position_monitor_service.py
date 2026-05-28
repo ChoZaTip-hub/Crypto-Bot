@@ -2,9 +2,11 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.account_context import account_context, settings_for_account
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.db.repositories.candle_repo import CandleRepository
+from app.db.repositories.exchange_account_repo import ExchangeAccountRepository
 from app.db.repositories.position_repo import PositionRepository
 from app.db.repositories.strategy_decision_repo import StrategyDecisionRepository
 from app.exchanges.bybit_client import BybitClient
@@ -24,18 +26,16 @@ class PositionMonitorService:
         self._position_repo = PositionRepository(session)
         self._candle_repo = CandleRepository(session)
         self._decision_repo = StrategyDecisionRepository(session)
+        self._account_repo = ExchangeAccountRepository(session)
         self._audit = AuditService(session)
         self._learning = LearningService(session, self._audit)
-        self._bybit = BybitClient(settings)
         self._paper = MockExchange()
-        self._execution = ExecutionService(
-            session, self._bybit, self._paper, settings, self._audit
-        )
+        self._default_bybit = BybitClient(settings)
 
-    async def _current_price(self, symbol: str) -> float | None:
-        if self._settings.is_live_trading:
+    async def _current_price(self, symbol: str, acc_settings: Settings) -> float | None:
+        if acc_settings.is_live_trading:
             try:
-                return await self._bybit.fetch_last_price(symbol)
+                return await BybitClient(acc_settings).fetch_last_price(symbol)
             except Exception as exc:
                 logger.warning("live_price_fetch_failed", symbol=symbol, error=str(exc))
         candle = await self._candle_repo.get_latest(symbol, "5")
@@ -43,13 +43,31 @@ class PositionMonitorService:
             candle = await self._candle_repo.get_latest(symbol, "1")
         return float(candle.close) if candle else None
 
+    def _execution_for_account(self, account_id: int, acc_settings: Settings) -> ExecutionService:
+        bybit = BybitClient(acc_settings)
+        return ExecutionService(
+            self._session,
+            bybit,
+            self._paper,
+            acc_settings,
+            self._audit,
+            account_id=account_id,
+        )
+
     async def tick(self) -> list[dict]:
-        """Check open positions; on SL/TP place market close on exchange (live) or paper."""
+        """Check open positions; on SL/TP place market close per account."""
         closed: list[dict] = []
         positions = await self._position_repo.get_open_positions()
 
         for pos in positions:
-            price = await self._current_price(pos.symbol)
+            account_id = int(getattr(pos, "account_id", 1) or 1)
+            acc = await self._account_repo.get_by_id(account_id)
+            acc_settings = (
+                settings_for_account(self._settings, acc)
+                if acc
+                else self._settings
+            )
+            price = await self._current_price(pos.symbol, acc_settings)
             if price is None:
                 continue
 
@@ -92,8 +110,9 @@ class PositionMonitorService:
                 entry_explanation=entry_note,
             )
 
+            execution = self._execution_for_account(account_id, acc_settings)
             try:
-                result = await self._execution.close_position_sl_tp(
+                result = await execution.close_position_sl_tp(
                     pos,
                     exit_reason=exit_reason,
                     trigger_price=price,
@@ -103,12 +122,14 @@ class PositionMonitorService:
                 logger.error(
                     "position_close_failed",
                     symbol=pos.symbol,
+                    account_id=account_id,
                     reason=exit_reason,
                     error=str(exc),
                 )
                 closed.append(
                     {
                         "symbol": pos.symbol,
+                        "account_id": account_id,
                         "exit_reason": exit_reason,
                         "error": str(exc),
                         "failed": True,
@@ -130,8 +151,18 @@ class PositionMonitorService:
                 exit_reason=exit_reason,
                 features={"exit_explanation": exit_explanation},
             )
-            item = {**result, "learning": learning, "explanation": exit_explanation}
+            item = {
+                **result,
+                "account_id": account_id,
+                "learning": learning,
+                "explanation": exit_explanation,
+            }
             closed.append(item)
-            logger.info("position_closed_sl_tp", symbol=pos.symbol, exit_reason=exit_reason)
+            logger.info(
+                "position_closed_sl_tp",
+                symbol=pos.symbol,
+                account_id=account_id,
+                exit_reason=exit_reason,
+            )
 
         return closed

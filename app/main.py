@@ -42,6 +42,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "or start Postgres: docker compose -f docker/docker-compose.yml up -d postgres"
         ) from exc
     app.state.db_manager = db_manager
+    async with db_manager.session_factory()() as session:
+        from app.services.account_bootstrap_service import AccountBootstrapService
+
+        await AccountBootstrapService(session, settings).ensure_default_account()
+        await session.commit()
     app.state.bot_manager = BotManager(db_manager, settings)
     app.state.background_manager = BackgroundManager(db_manager, settings)
     if settings.background_services_enabled:

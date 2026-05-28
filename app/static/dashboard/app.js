@@ -16,6 +16,10 @@ let lastLivePrice = null;
 let lastPriceSource = "";
 let lastLivePlan = null;
 let allSymbols = [];
+let userPinnedSymbol = false;
+let programmaticSymbolChange = false;
+let lastOpportunityMeta = null;
+let symbolPickMap = {};
 
 function formatPrice(v) {
   if (v == null || Number.isNaN(Number(v))) return "—";
@@ -608,7 +612,7 @@ function renderTradePlan(plan, signal, tradingParams, lastCycleDecisions) {
   if (!el) return;
   const sym = $("symbolSelect")?.value || "BTCUSDT";
   const lc = (lastCycleDecisions || []).find((d) => d.symbol === sym);
-  const data =
+  let data =
     plan ||
     (signal && signal.action !== "HOLD"
       ? {
@@ -650,6 +654,17 @@ function renderTradePlan(plan, signal, tradingParams, lastCycleDecisions) {
     (tradingParams?.position_size_mode === "fixed_usdt" ? tradingParams?.order_usdt : null);
   const entryType = tradingParams?.entry_order_type || "Market";
   const horizon = data.horizon_label ? ` · горизонт ${data.horizon_label}` : "";
+  const pnl = data.pnl_estimate || {};
+  const rr =
+    data.risk_reward_ratio != null
+      ? Number(data.risk_reward_ratio).toFixed(2)
+      : pnl.risk_reward_ratio != null
+        ? Number(pnl.risk_reward_ratio).toFixed(2)
+        : null;
+  const pnlLine =
+    pnl.risk_usdt != null && pnl.reward_usdt != null
+      ? `<dt>≈ USDT (SL / TP)</dt><dd class="pnl-est">−${pnl.risk_usdt} / +${pnl.reward_usdt}</dd>`
+      : "";
 
   const cls = data.action === "BUY" || data.action === "Buy" ? "buy" : "sell";
   const aiTag = data.ai_influenced
@@ -667,6 +682,8 @@ function renderTradePlan(plan, signal, tradingParams, lastCycleDecisions) {
       <dt>Текущая цена</dt><dd>${fmt(data.live_price || lastLivePrice)}</dd>
       <dt>Stop Loss</dt><dd>${fmt(data.stop_loss)}</dd>
       <dt>Take Profit</dt><dd>${fmt(data.take_profit)}</dd>
+      ${rr ? `<dt>R:R</dt><dd>1:${rr}</dd>` : ""}
+      ${pnlLine}
     </dl>
     <div class="reason">${escapeHtml(data.reason || "")}</div>
   `;
@@ -730,7 +747,12 @@ function renderTraderBriefing(briefing, overview) {
           ${trade.current_price && trade.entry && Math.abs(Number(trade.current_price) - Number(trade.entry)) > 1 ? `<dt>Сейчас на рынке</dt><dd>${fmt(trade.current_price)}</dd>` : ""}
           <dt>Stop Loss</dt><dd>${fmt(trade.stop_loss)} <span class="hint">(${trade.risk_pct_signed ?? trade.risk_pct ?? "—"}%)</span></dd>
           <dt>Take Profit</dt><dd>${fmt(trade.take_profit)} <span class="hint">(+${trade.reward_pct_signed ?? trade.reward_pct ?? "—"}%)</span></dd>
-          ${trade.risk_reward ? `<dt>R:R</dt><dd>${Number(trade.risk_reward).toFixed(2)}</dd>` : ""}
+          ${trade.risk_reward ? `<dt>R:R</dt><dd>1:${Number(trade.risk_reward).toFixed(2)}</dd>` : ""}
+          ${
+            trade.pnl_estimate?.risk_usdt != null
+              ? `<dt>≈ USDT</dt><dd>−${trade.pnl_estimate.risk_usdt} / +${trade.pnl_estimate.reward_usdt}</dd>`
+              : ""
+          }
         </dl>
       </div>`;
   } else {
@@ -1083,16 +1105,177 @@ async function loadRatioSection() {
   });
 }
 
+function symbolOptionLabel(sym) {
+  const p = symbolPickMap[sym];
+  if (!p) return sym;
+  const act = p.action || "—";
+  if (p.confidence != null && p.confidence > 0) {
+    return `${sym} · ${act} ${Math.round(Number(p.confidence) * 100)}%`;
+  }
+  if (p.score != null && Number(p.score) > 0) {
+    return `${sym} · ${act} ${Math.round(Number(p.score))}`;
+  }
+  return `${sym} · ${act}`;
+}
+
+function opportunityPickOrder() {
+  const order = new Map();
+  (lastOpportunityMeta?.picks || []).forEach((p, i) => {
+    if (p?.symbol) order.set(String(p.symbol).toUpperCase(), i);
+  });
+  (lastOpportunityMeta?.scanner_top || []).forEach((s, i) => {
+    const su = String(s).toUpperCase();
+    if (!order.has(su)) order.set(su, 100 + i);
+  });
+  return order;
+}
+
+function sortSymbolsByOpportunity(list) {
+  const order = opportunityPickOrder();
+  return [...list].sort((a, b) => {
+    const ia = order.has(a) ? order.get(a) : 9999;
+    const ib = order.has(b) ? order.get(b) : 9999;
+    if (ia !== ib) return ia - ib;
+    return a.localeCompare(b);
+  });
+}
+
+function applyOpportunityMeta(opp) {
+  if (!opp) return;
+  lastOpportunityMeta = opp;
+  symbolPickMap = {};
+  (opp.picks || []).forEach((p) => {
+    if (p?.symbol) symbolPickMap[String(p.symbol).toUpperCase()] = p;
+  });
+  renderOpportunitiesPanel(opp);
+  filterSymbolOptions($("symbolFilter")?.value || "");
+}
+
+function renderOpportunitiesPanel(opp) {
+  const el = $("opportunitiesPanel");
+  if (!el) return;
+  const picks = (opp?.picks || [])
+    .filter((p) => p.action !== "HOLD" || Number(p.score) > 0)
+    .slice(0, 10);
+  if (!picks.length) {
+    el.innerHTML =
+      '<p class="hint">Запустите бота или «Один цикл» — здесь появятся лучшие монеты.</p>';
+    return;
+  }
+  const cur = selectedSymbol();
+  el.innerHTML = picks
+    .map((p) => {
+      const sym = p.symbol;
+      const cls = [
+        "opp-chip",
+        sym === cur ? "active" : "",
+        p.executed ? "executed" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const conf =
+        p.confidence != null && p.confidence > 0
+          ? `${Math.round(Number(p.confidence) * 100)}%`
+          : p.score != null
+            ? `+${Math.round(Number(p.score))}`
+            : "";
+      const badge = p.executed ? "✓" : p.risk_allowed === false ? "⛔" : "";
+      const title = escapeHtml(p.reason || p.activity || "");
+      return `<button type="button" class="${cls}" data-opp-symbol="${sym}" title="${title}">
+        <span class="opp-sym">${sym.replace(/USDT$/i, "")}</span>
+        <span class="opp-act ${String(p.action || "").toLowerCase()}">${p.action || "—"}</span>
+        <span class="opp-score">${conf}</span>${badge ? `<span class="opp-badge">${badge}</span>` : ""}
+      </button>`;
+    })
+    .join("");
+
+  el.querySelectorAll("[data-opp-symbol]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      userPinnedSymbol = true;
+      const auto = $("autoSymbolFollow");
+      if (auto) auto.checked = false;
+      setSymbolProgrammatic(btn.dataset.oppSymbol);
+      tvChartKey = "";
+      lastLivePlan = null;
+      lastOverview = null;
+      startLivePricePoll();
+      refreshAll();
+    });
+  });
+}
+
+function setSymbolProgrammatic(sym) {
+  const su = String(sym || "").toUpperCase();
+  if (!su) return;
+  programmaticSymbolChange = true;
+  const select = $("symbolSelect");
+  if (select) {
+    if (![...select.options].some((o) => o.value === su)) {
+      const opt = document.createElement("option");
+      opt.value = su;
+      opt.textContent = symbolOptionLabel(su);
+      select.insertBefore(opt, select.firstChild);
+    }
+    select.value = su;
+  }
+  programmaticSymbolChange = false;
+}
+
+function maybeAutoFocusChartSymbol(opp) {
+  if (!opp || userPinnedSymbol) return false;
+  const rec = opp.recommended_chart_symbol;
+  if (!rec) return false;
+  const cur = selectedSymbol();
+  if (rec === cur) return false;
+  const known =
+    allSymbols.includes(rec) ||
+    (lastOpportunityMeta?.picks || []).some((p) => p.symbol === rec);
+  if (!known) return false;
+  setSymbolProgrammatic(rec);
+  setStatusHint(`График: ${rec} — лучший сигнал бота`);
+  return true;
+}
+
+function opportunitiesFromScannerStatus(st) {
+  const scan = st?.last_scan;
+  if (!scan?.ranked?.length) return null;
+  const picks = scan.ranked.map((r) => ({
+    symbol: r.symbol,
+    score: r.score,
+    action: r.action || "HOLD",
+    source: "scanner",
+  }));
+  return {
+    picks,
+    recommended_chart_symbol: (scan.top_symbols || [])[0] || picks[0]?.symbol,
+    scanner_top: scan.top_symbols || [],
+    trading_universe: [],
+  };
+}
+
+async function loadScannerOpportunities() {
+  try {
+    const st = await api("/api/v1/scanner/status");
+    const opp = opportunitiesFromScannerStatus(st);
+    if (opp) applyOpportunityMeta(opp);
+    return opp;
+  } catch (e) {
+    console.debug("scanner status", e);
+    return null;
+  }
+}
+
 function populateSymbols(symbols) {
   allSymbols = (symbols || []).map((s) => String(s).toUpperCase());
   const select = $("symbolSelect");
   if (!select) return;
   const prev = select.value;
   select.innerHTML = "";
-  allSymbols.forEach((s) => {
+  sortSymbolsByOpportunity(allSymbols).forEach((s) => {
     const opt = document.createElement("option");
     opt.value = s;
-    opt.textContent = s;
+    opt.textContent = symbolOptionLabel(s);
+    if (symbolPickMap[s]) opt.className = "opportunity-top";
     select.appendChild(opt);
   });
   if (prev && allSymbols.includes(prev)) select.value = prev;
@@ -1107,15 +1290,17 @@ function filterSymbolOptions(query) {
   const q = String(query || "")
     .trim()
     .toUpperCase();
-  const filtered = q
+  let filtered = q
     ? allSymbols.filter((s) => s.includes(q))
     : allSymbols;
+  filtered = sortSymbolsByOpportunity(filtered);
   const prev = select.value;
   select.innerHTML = "";
   filtered.slice(0, 200).forEach((s) => {
     const opt = document.createElement("option");
     opt.value = s;
-    opt.textContent = s;
+    opt.textContent = symbolOptionLabel(s);
+    if (symbolPickMap[s]) opt.className = "opportunity-top";
     select.appendChild(opt);
   });
   if (prev && filtered.includes(prev)) select.value = prev;
@@ -1229,7 +1414,21 @@ async function refreshAll() {
   refreshAbort = new AbortController();
   const signal = refreshAbort.signal;
   try {
-    await loadOverview({ signal });
+    let { overview } = await loadOverview({ signal });
+    const opp = overview?.trading_opportunities || lastOpportunityMeta;
+    if (opp) {
+      applyOpportunityMeta(opp);
+      if (maybeAutoFocusChartSymbol(opp)) {
+        tvChartKey = "";
+        lastLivePlan = null;
+        lastOverview = null;
+        startLivePricePoll();
+        ({ overview } = await loadOverview({ signal }));
+        if (overview?.trading_opportunities) {
+          applyOpportunityMeta(overview.trading_opportunities);
+        }
+      }
+    }
     showApiError("");
   } catch (e) {
     if (e?.name === "AbortError") return;
@@ -1355,11 +1554,20 @@ function bindControls() {
     filterSymbolOptions(e.target.value);
   });
   $("symbolSelect")?.addEventListener("change", () => {
+    if (!programmaticSymbolChange) {
+      userPinnedSymbol = true;
+      const auto = $("autoSymbolFollow");
+      if (auto) auto.checked = false;
+    }
     tvChartKey = "";
     lastLivePlan = null;
     lastOverview = null;
     startLivePricePoll();
     refreshAll();
+  });
+  $("autoSymbolFollow")?.addEventListener("change", (e) => {
+    userPinnedSymbol = !e.target.checked;
+    if (!userPinnedSymbol) refreshAll();
   });
   $("timeframeSelect")?.addEventListener("change", () => {
     tvChartKey = "";
@@ -1394,6 +1602,12 @@ async function init() {
   }
 
   populateSymbols(normalizeSymbols(status, meta));
+  const seedOpp =
+    status.trading_opportunities ||
+    (await loadScannerOpportunities());
+  if (seedOpp && !userPinnedSymbol && seedOpp.recommended_chart_symbol) {
+    setSymbolProgrammatic(seedOpp.recommended_chart_symbol);
+  }
   const tfs = normalizeTimeframes(status, meta);
   const labels =
     status.timeframe_labels ||

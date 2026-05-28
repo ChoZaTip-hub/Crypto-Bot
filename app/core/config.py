@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     data_stale_seconds: int = 120
     max_atr_pct: float = 0.05
 
+    # SL/TP = entry ± (ATR × multiplier). Default 1.5 / 4.5 ATR → ~1:3 R:R (min 1:2).
+    sl_atr_multiplier: float = 1.5
+    tp_atr_multiplier: float = 4.5
+    min_risk_reward_ratio: float = 2.0
+
     paper_initial_balance: float = 10_000.0
     paper_slippage_bps: float = 5.0
 
@@ -145,6 +150,22 @@ class Settings(BaseSettings):
     ratio_swap_fraction: float = 1.0
     ratio_proposal_ttl_hours: int = 24
 
+    # Autonomous coin scanner (Bybit USDT spot)
+    scanner_enabled: bool = True
+    scanner_universe_size: int = 80
+    scanner_batch_size: int = 24
+    scanner_top_n: int = 12
+    scanner_min_score: float = 1.2
+    scanner_min_turnover_usdt: float = 500_000.0
+    scanner_timeframes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["5", "15", "60"]
+    )
+    max_symbols_per_cycle: int = 15
+
+    # Multi-account copy trading (no Telegram yet — API / DB accounts)
+    multi_account_copy_enabled: bool = True
+    credentials_encryption_key: str = ""
+
     @model_validator(mode="before")
     @classmethod
     def parse_comma_separated_lists(cls, data: Any) -> Any:
@@ -156,6 +177,7 @@ class Settings(BaseSettings):
             ("timeframes", _parse_csv_list),
             ("bot_cycle_timeframes", _parse_csv_list),
             ("dashboard_indicator_timeframes", _parse_csv_list),
+            ("scanner_timeframes", _parse_csv_list),
         ):
             if key in data:
                 data[key] = parser(data[key])

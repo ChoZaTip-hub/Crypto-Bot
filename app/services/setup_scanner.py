@@ -6,7 +6,7 @@ from typing import Any
 
 from app.core.timeframes import label_for_timeframe
 from app.services.market_analysis_service import TF_WEIGHT, _bias_for_tf, _tf_tier
-from app.strategies.levels import compute_sl_tp
+from app.strategies.levels import SlTpMultipliers, compute_sl_tp
 
 
 def _coerce_live_entry(entry: float | None, live_price: float) -> float:
@@ -24,6 +24,8 @@ def scan_timeframe_setups(
     symbol: str,
     timeframes: dict[str, dict],
     live_price: float,
+    *,
+    mults: SlTpMultipliers | None = None,
 ) -> list[dict[str, Any]]:
     """Immediate view: bullish/bearish bias per TF with entry=live price now."""
     setups: list[dict[str, Any]] = []
@@ -38,7 +40,7 @@ def scan_timeframe_setups(
             continue
         action = "BUY" if bias == "bullish" else "SELL"
         atr = float(ind.get("atr") or 0)
-        sl, tp = compute_sl_tp(action, live_price, atr)
+        sl, tp = compute_sl_tp(action, live_price, atr, mults=mults)
         setups.append(
             {
                 "symbol": symbol.upper(),
