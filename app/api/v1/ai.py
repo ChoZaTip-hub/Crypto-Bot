@@ -1,8 +1,9 @@
 """AI trade analysis API."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import SessionDep, SettingsDep
+from app.core.security import verify_admin_token
 from app.db.repositories.candle_repo import CandleRepository
 from app.services.ai.trade_analyst import AiTradeAnalyst
 from app.services.audit_service import AuditService
@@ -54,7 +55,7 @@ async def ai_status(settings: SettingsDep) -> dict:
     }
 
 
-@router.post("/analyze")
+@router.post("/analyze", dependencies=[Depends(verify_admin_token)])
 async def ai_analyze(
     session: SessionDep,
     settings: SettingsDep,

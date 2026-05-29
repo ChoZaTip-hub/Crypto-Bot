@@ -11,4 +11,4 @@ class DecisionWorker:
         self._orchestrator = BotOrchestrator(session, settings)
 
     async def run_once(self) -> dict:
-        return await self._orchestrator.run_once()
+        return await self._orchestrator.run_pipeline()

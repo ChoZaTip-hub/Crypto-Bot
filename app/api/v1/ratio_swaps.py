@@ -1,8 +1,9 @@
 """Cross-asset ratio monitoring and user-approved swaps."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import SessionDep, SettingsDep
+from app.core.security import verify_admin_token
 from app.services.audit_service import AuditService
 from app.services.ratio_monitor_service import RatioMonitorService
 from app.services.ratio_swap_service import RatioSwapService
@@ -36,7 +37,7 @@ async def list_proposals(
     return {"proposals": items}
 
 
-@router.post("/scan")
+@router.post("/scan", dependencies=[Depends(verify_admin_token)])
 async def scan_proposals(session: SessionDep, settings: SettingsDep) -> dict:
     """Record ratios and create proposals for extreme pairs."""
     svc = RatioSwapService(session, settings, AuditService(session))
@@ -45,7 +46,7 @@ async def scan_proposals(session: SessionDep, settings: SettingsDep) -> dict:
     return {"created": len(created), "proposals": created}
 
 
-@router.post("/proposals/{proposal_id}/approve")
+@router.post("/proposals/{proposal_id}/approve", dependencies=[Depends(verify_admin_token)])
 async def approve_proposal(proposal_id: int, session: SessionDep, settings: SettingsDep) -> dict:
     svc = RatioSwapService(session, settings, AuditService(session))
     result = await svc.approve(proposal_id)
@@ -55,7 +56,7 @@ async def approve_proposal(proposal_id: int, session: SessionDep, settings: Sett
     return result
 
 
-@router.post("/proposals/{proposal_id}/reject")
+@router.post("/proposals/{proposal_id}/reject", dependencies=[Depends(verify_admin_token)])
 async def reject_proposal(
     proposal_id: int,
     session: SessionDep,

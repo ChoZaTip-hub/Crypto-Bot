@@ -723,6 +723,31 @@ select {
 .risk-ok { color: var(--green); }
 .risk-block { color: var(--red); }
 
+.indicator-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.indicator-row span {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+}
+
+.admin-token-row {
+  margin-top: 0.75rem;
+  max-width: 420px;
+}
+
+.admin-token-row input {
+  width: 100%;
+  margin-bottom: 0.35rem;
+}
+
 .auto-symbol-toggle {
   display: flex;
   align-items: center;

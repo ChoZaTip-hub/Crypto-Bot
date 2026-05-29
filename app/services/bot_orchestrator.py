@@ -9,7 +9,7 @@ from app.core.config import Settings
 from app.core.constants import AuditEventType, SignalAction
 from app.core.logging import get_logger
 from app.exchanges.bybit_client import BybitClient
-from app.exchanges.mock_exchange import MockExchange
+from app.exchanges.paper_registry import get_paper_exchange
 from app.services.audit_service import AuditService
 from app.services.execution_router import ExecutionRouter
 from app.services.execution_service import ExecutionService
@@ -27,7 +27,7 @@ class BotOrchestrator:
         self._session = session
         self._settings = settings
         self._audit = AuditService(session)
-        self._paper = MockExchange()
+        self._paper = get_paper_exchange(DEFAULT_ACCOUNT_ID, initial_balance=settings.paper_initial_balance)
         self._bybit = BybitClient(settings)
         self._market_exchange = (
             self._bybit if settings.use_bybit_market_data else self._paper
@@ -70,7 +70,6 @@ class BotOrchestrator:
             symbols = list(self._settings.symbol_whitelist)
 
         market_counts = await self._market.ingest_cycle(symbols)
-        await self._session.commit()
         portfolio = await self._portfolio.snapshot()
         results: list[dict[str, Any]] = []
 

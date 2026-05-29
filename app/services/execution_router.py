@@ -13,6 +13,7 @@ from app.core.logging import get_logger
 from app.db.repositories.exchange_account_repo import ExchangeAccountRepository
 from app.exchanges.bybit_client import BybitClient
 from app.exchanges.mock_exchange import MockExchange
+from app.exchanges.paper_registry import get_paper_exchange
 from app.risk.manager import RiskAssessment
 from app.services.audit_service import AuditService
 from app.services.execution_service import ExecutionService
@@ -31,13 +32,13 @@ class ExecutionRouter:
         settings: Settings,
         audit: AuditService,
         market_data: MarketDataService,
-        paper: MockExchange,
+        paper: MockExchange | None = None,
     ) -> None:
         self._session = session
         self._settings = settings
         self._audit = audit
         self._market_data = market_data
-        self._paper = paper
+        self._paper_fallback = paper
         self._accounts = ExchangeAccountRepository(session)
 
     async def execute_for_all_accounts(
@@ -114,10 +115,19 @@ class ExecutionRouter:
             return None
 
         bybit = BybitClient(acc_settings)
+        acc_row = await self._accounts.get_by_id(account_id)
+        paper = get_paper_exchange(
+            account_id,
+            initial_balance=(
+                float(acc_row.paper_initial_balance)
+                if acc_row and acc_row.paper_initial_balance
+                else acc_settings.paper_initial_balance
+            ),
+        )
         execution = ExecutionService(
             self._session,
             bybit,
-            self._paper,
+            paper,
             acc_settings,
             self._audit,
             account_id=account_id,

@@ -3,23 +3,29 @@
 from fastapi import APIRouter, Query
 
 from app.api.deps import SessionDep, SettingsDep
+from app.db.repositories.portfolio_repo import PortfolioRepository
+from app.db.repositories.position_repo import PositionRepository
 from app.db.repositories.risk_repo import RiskRepository
 from app.schemas.risk import RiskStatusSchema
+from app.services.portfolio_service import PortfolioService
 
 router = APIRouter(prefix="/risk", tags=["risk"])
 
 
 @router.get("/status", response_model=RiskStatusSchema)
 async def risk_status(session: SessionDep, settings: SettingsDep) -> RiskStatusSchema:
-    from app.db.repositories.position_repo import PositionRepository
-
     positions = await PositionRepository(session).get_open_positions()
+    portfolio = PortfolioService(session, settings)
+    snap = await portfolio.snapshot()
+    daily = portfolio.daily_pnl_pct
+    dd = float(snap.get("drawdown_pct") or 0)
+    circuit = dd >= settings.circuit_breaker_drawdown
     return RiskStatusSchema(
         kill_switch=settings.kill_switch,
-        circuit_breaker_triggered=False,
+        circuit_breaker_triggered=circuit,
         open_positions=len(positions),
-        daily_pnl_pct=0.0,
-        drawdown_pct=0.0,
+        daily_pnl_pct=round(daily, 4),
+        drawdown_pct=round(dd, 4),
     )
 
 

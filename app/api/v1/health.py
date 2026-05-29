@@ -25,5 +25,21 @@ async def health(request: Request) -> dict:
 
 
 @router.get("/ready")
-async def ready() -> dict:
-    return {"ready": True}
+async def ready(request: Request) -> dict:
+    settings = get_settings()
+    db_ok = False
+    if hasattr(request.app.state, "db_manager"):
+        init = DatabaseInitializer(request.app.state.db_manager.engine)
+        db_ok = await init.ping()
+    bot_ok = True
+    if hasattr(request.app.state, "bot_manager"):
+        bot_ok = request.app.state.bot_manager.last_error is None
+    is_ready = db_ok and bot_ok
+    return {
+        "ready": is_ready,
+        "database": "up" if db_ok else "down",
+        "bot_error": request.app.state.bot_manager.last_error
+        if hasattr(request.app.state, "bot_manager")
+        else None,
+        "app_env": settings.app_env,
+    }

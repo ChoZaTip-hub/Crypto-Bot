@@ -33,3 +33,25 @@ def tradingview_symbol(symbol: str) -> str:
 def tradingview_interval(code: str) -> str:
     """Map Bybit kline code to TradingView interval string."""
     return code if code in ("1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M") else "5"
+
+
+_TIMEFRAME_SECONDS: dict[str, int] = {
+    "1": 60,
+    "3": 180,
+    "5": 300,
+    "15": 900,
+    "30": 1800,
+    "60": 3600,
+    "120": 7200,
+    "240": 14400,
+    "360": 21600,
+    "720": 43200,
+    "D": 86400,
+    "W": 604800,
+    "M": 2592000,
+}
+
+
+def seconds_for_timeframe(code: str) -> int:
+    """Candle duration in seconds for freshness checks."""
+    return _TIMEFRAME_SECONDS.get(code, 300)

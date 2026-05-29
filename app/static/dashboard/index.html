@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Crypto Trading Bot — Панель управления</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=22" />
+  <link rel="stylesheet" href="/assets/styles.css?v=32" />
 </head>
 <body>
   <header class="topbar">
@@ -54,6 +54,11 @@
         <button id="btnRefreshMarket" class="btn ghost" title="Принудительно подтянуть свечи Bybit">Обновить свечи</button>
         <button id="btnRefreshMarketFull" class="btn ghost" title="Все монеты — долго">Все монеты</button>
         <button id="btnRatioScan" class="btn ghost">Соотношения BTC/ETH</button>
+      </div>
+      <div class="control-group admin-token-row">
+        <label>API Admin Token (Render / prod)</label>
+        <input type="password" id="adminTokenInput" placeholder="X-Admin-Token из .env" autocomplete="off" />
+        <button type="button" id="adminTokenSave" class="btn ghost btn-sm">Сохранить токен</button>
       </div>
     </details>
     <details class="help-panel" open>
@@ -158,6 +163,8 @@
               <div id="signalBox" class="signal-box"></div>
             </section>
           </div>
+          <h3 class="subheading chart-sidebar-title">Индикаторы (график)</h3>
+          <div id="indicatorRow" class="indicator-row"></div>
           <h3 class="subheading chart-sidebar-title">Ключевые таймфреймы</h3>
           <div id="multiTfPanel" class="multi-tf-panel multi-tf-panel--stack"></div>
           <section class="sidebar-mini-card sidebar-learning">
@@ -197,6 +204,6 @@
   </main>
 
   <footer class="footer">API: <a href="/docs" target="_blank">/docs</a></footer>
-  <script src="/assets/app.js?v=31"></script>
+  <script src="/assets/app.js?v=32"></script>
 </body>
 </html>

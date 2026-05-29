@@ -35,6 +35,7 @@ class ExecutionService:
         self._order_repo = OrderRepository(session)
         self._fill_repo = FillRepository(session)
         self._position_repo = PositionRepository(session)
+        self._session = session
         self._exchange = exchange
         self._paper = paper_exchange
         self._settings = settings
@@ -89,19 +90,27 @@ class ExecutionService:
         )
 
         ex = self._active_exchange()
-        result = await ex.place_order(
-            TradeOrderRequest(
-                symbol=signal.symbol,
-                side=side.value,
-                qty=risk.suggested_qty,
-                order_type=order_type,
-                price=limit_price,
-                client_order_id=client_order_id,
-                correlation_id=signal.correlation_id,
-                stop_loss=signal.stop_loss if attach_sl_tp else None,
-                take_profit=signal.take_profit if attach_sl_tp else None,
+        try:
+            result = await ex.place_order(
+                TradeOrderRequest(
+                    symbol=signal.symbol,
+                    side=side.value,
+                    qty=risk.suggested_qty,
+                    order_type=order_type,
+                    price=limit_price,
+                    client_order_id=client_order_id,
+                    correlation_id=signal.correlation_id,
+                    stop_loss=signal.stop_loss if attach_sl_tp else None,
+                    take_profit=signal.take_profit if attach_sl_tp else None,
+                )
             )
-        )
+        except (ExchangeError, LiveTradingDisabledError):
+            await self._order_repo.update_status(order_id, OrderStatus.CANCELLED.value, None)
+            raise
+        except Exception as exc:
+            logger.error("order_place_failed", order_id=order_id, error=str(exc))
+            await self._order_repo.update_status(order_id, OrderStatus.CANCELLED.value, None)
+            raise ExchangeError(str(exc)) from exc
 
         await self._order_repo.update_status(
             order_id, OrderStatus.FILLED.value, result.exchange_order_id
@@ -141,6 +150,7 @@ class ExecutionService:
                 correlation_id=signal.correlation_id,
                 payload={
                     "order_id": order_id,
+                    "account_id": self._account_id,
                     "mode": self._settings.trading_mode.value,
                     "qty": risk.suggested_qty,
                     "exchange_sl_tp": attach_sl_tp,
@@ -151,17 +161,22 @@ class ExecutionService:
                 },
             )
         else:
-            pos = await self._position_repo.get_by_symbol(signal.symbol)
+            pos = await self._position_repo.get_by_symbol(
+                signal.symbol, account_id=self._account_id
+            )
             exit_note = signal.explanation or signal.reason
             if pos and exit_note:
                 pos.exit_explanation = exit_note
-                await self._position_repo._session.flush()
-            await self._position_repo.close_position(signal.symbol, fill_price)
+                await self._session.flush()
+            await self._position_repo.close_position(
+                signal.symbol, fill_price, account_id=self._account_id
+            )
             await self._audit.log(
                 AuditEventType.ORDER_PLACED,
                 correlation_id=signal.correlation_id,
                 payload={
                     "order_id": order_id,
+                    "account_id": self._account_id,
                     "mode": self._settings.trading_mode.value,
                     "qty": risk.suggested_qty,
                     "event": "position_closed_by_signal",
@@ -180,6 +195,7 @@ class ExecutionService:
             "qty": filled_qty,
             "fill_price": fill_price,
             "notional_usdt": filled_qty * fill_price if fill_price else None,
+            "account_id": self._account_id,
         }
 
     async def close_position_sl_tp(
@@ -193,11 +209,14 @@ class ExecutionService:
         if not position.is_open or position.qty <= 0:
             return None
 
+        account_id = int(position.account_id or self._account_id)
         is_long = position.side.lower() in ("buy", "long")
         close_side = OrderSide.SELL if is_long else OrderSide.BUY
 
         if self._settings.is_live_trading and not self._settings.live_close_sl_tp_on_exchange:
-            await self._position_repo.close_position(position.symbol, trigger_price)
+            await self._position_repo.close_position(
+                position.symbol, trigger_price, account_id=account_id
+            )
             return {"symbol": position.symbol, "closed_in_db_only": True, "exit_reason": exit_reason}
 
         order_id = str(uuid.uuid4())
@@ -206,6 +225,7 @@ class ExecutionService:
 
         await self._order_repo.create_order(
             {
+                "account_id": account_id,
                 "order_id": order_id,
                 "correlation_id": position.correlation_id or order_id,
                 "symbol": position.symbol,
@@ -230,8 +250,10 @@ class ExecutionService:
                 )
             )
         except LiveTradingDisabledError:
+            await self._order_repo.update_status(order_id, OrderStatus.CANCELLED.value, None)
             raise
         except ExchangeError as exc:
+            await self._order_repo.update_status(order_id, OrderStatus.CANCELLED.value, None)
             msg = str(exc).lower()
             if "insufficient" in msg or "not enough" in msg or "balance" in msg:
                 logger.warning(
@@ -239,7 +261,9 @@ class ExecutionService:
                     symbol=position.symbol,
                     reason=exit_reason,
                 )
-                await self._position_repo.close_position(position.symbol, trigger_price)
+                await self._position_repo.close_position(
+                    position.symbol, trigger_price, account_id=account_id
+                )
                 return {
                     "symbol": position.symbol,
                     "exit_reason": exit_reason,
@@ -254,6 +278,7 @@ class ExecutionService:
             )
             raise
         except Exception as exc:
+            await self._order_repo.update_status(order_id, OrderStatus.CANCELLED.value, None)
             logger.error(
                 "sl_tp_close_failed",
                 symbol=position.symbol,
@@ -279,9 +304,11 @@ class ExecutionService:
 
         if exit_explanation:
             position.exit_explanation = exit_explanation
-            await self._position_repo._session.flush()
+            await self._session.flush()
 
-        closed = await self._position_repo.close_position(position.symbol, exit_price)
+        closed = await self._position_repo.close_position(
+            position.symbol, exit_price, account_id=account_id
+        )
         if closed:
             pnl = (
                 (exit_price - position.entry_price) * qty
@@ -289,13 +316,14 @@ class ExecutionService:
                 else (position.entry_price - exit_price) * qty
             )
             closed.realized_pnl = pnl
-            await self._position_repo._session.flush()
+            await self._session.flush()
 
         await self._audit.log(
             AuditEventType.POSITION_SL_TP_CLOSED,
             correlation_id=position.correlation_id or position.symbol,
             payload={
                 "symbol": position.symbol,
+                "account_id": account_id,
                 "exit_reason": exit_reason,
                 "exit_price": exit_price,
                 "trigger_price": trigger_price,
@@ -312,10 +340,15 @@ class ExecutionService:
             "exchange_order_id": result.exchange_order_id,
             "order_id": order_id,
             "explanation": exit_explanation,
+            "account_id": account_id,
         }
 
-    async def close_position_manual(self, symbol: str, qty: float) -> dict | None:
-        pos = await self._position_repo.get_by_symbol(symbol)
+    async def close_position_manual(
+        self, symbol: str, qty: float, account_id: int = 1
+    ) -> dict | None:
+        pos = await self._position_repo.get_by_symbol(symbol, account_id=account_id)
         if not pos:
             return None
-        return await self.close_position_sl_tp(pos, "manual", pos.current_price or pos.entry_price)
+        return await self.close_position_sl_tp(
+            pos, "manual", pos.current_price or pos.entry_price
+        )

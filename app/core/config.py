@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     entry_order_type: str = "Market"
 
     api_admin_token: str = ""
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
     bot_auto_start: bool = False
     market_poll_interval_seconds: int = 5
     use_bybit_market_data: bool = True
@@ -178,6 +179,7 @@ class Settings(BaseSettings):
             ("bot_cycle_timeframes", _parse_csv_list),
             ("dashboard_indicator_timeframes", _parse_csv_list),
             ("scanner_timeframes", _parse_csv_list),
+            ("cors_origins", _parse_csv_list),
         ):
             if key in data:
                 data[key] = parser(data[key])

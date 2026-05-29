@@ -2,15 +2,15 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.account_context import account_context, settings_for_account
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.db.repositories.candle_repo import CandleRepository
 from app.db.repositories.exchange_account_repo import ExchangeAccountRepository
 from app.db.repositories.position_repo import PositionRepository
 from app.db.repositories.strategy_decision_repo import StrategyDecisionRepository
+from app.core.account_context import settings_for_account
 from app.exchanges.bybit_client import BybitClient
-from app.exchanges.mock_exchange import MockExchange
+from app.exchanges.paper_registry import get_paper_exchange
 from app.services.audit_service import AuditService
 from app.services.decision_explanation import build_exit_explanation
 from app.services.execution_service import ExecutionService
@@ -29,8 +29,6 @@ class PositionMonitorService:
         self._account_repo = ExchangeAccountRepository(session)
         self._audit = AuditService(session)
         self._learning = LearningService(session, self._audit)
-        self._paper = MockExchange()
-        self._default_bybit = BybitClient(settings)
 
     async def _current_price(self, symbol: str, acc_settings: Settings) -> float | None:
         if acc_settings.is_live_trading:
@@ -45,10 +43,14 @@ class PositionMonitorService:
 
     def _execution_for_account(self, account_id: int, acc_settings: Settings) -> ExecutionService:
         bybit = BybitClient(acc_settings)
+        paper = get_paper_exchange(
+            account_id,
+            initial_balance=acc_settings.paper_initial_balance,
+        )
         return ExecutionService(
             self._session,
             bybit,
-            self._paper,
+            paper,
             acc_settings,
             self._audit,
             account_id=account_id,
@@ -63,9 +65,7 @@ class PositionMonitorService:
             account_id = int(getattr(pos, "account_id", 1) or 1)
             acc = await self._account_repo.get_by_id(account_id)
             acc_settings = (
-                settings_for_account(self._settings, acc)
-                if acc
-                else self._settings
+                settings_for_account(self._settings, acc) if acc else self._settings
             )
             price = await self._current_price(pos.symbol, acc_settings)
             if price is None:

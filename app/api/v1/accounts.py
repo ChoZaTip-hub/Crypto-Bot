@@ -1,10 +1,11 @@
 """Exchange accounts API (multi-tenant copy trading)."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api.deps import SessionDep, SettingsDep
 from app.core.credentials import encrypt_secret
+from app.core.security import verify_admin_token
 from app.db.repositories.exchange_account_repo import ExchangeAccountRepository
 from app.db.repositories.user_repo import UserRepository
 from app.models.exchange_account import ExchangeAccount
@@ -47,7 +48,7 @@ async def list_accounts(session: SessionDep) -> dict:
     }
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(verify_admin_token)])
 async def create_account(
     body: AccountCreateBody, session: SessionDep, settings: SettingsDep
 ) -> dict:
@@ -73,7 +74,7 @@ async def create_account(
     return {"id": created.id, "label": created.label}
 
 
-@router.patch("/{account_id}/toggle")
+@router.patch("/{account_id}/toggle", dependencies=[Depends(verify_admin_token)])
 async def toggle_account(
     account_id: int,
     session: SessionDep,

@@ -27,6 +27,9 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
+    from app.core.credentials import validate_startup_config
+
+    validate_startup_config(settings)
     if settings.database_url.startswith("sqlite"):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
     db_manager = DatabaseSessionManager(settings.database_url, echo=settings.debug)
@@ -70,10 +73,11 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
     )
+    cors_origins = settings.cors_origins or ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials="*" not in cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )

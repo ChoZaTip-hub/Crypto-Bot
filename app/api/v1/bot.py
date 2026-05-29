@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import BackgroundManagerDep, BotManagerDep, SettingsDep
-from app.core.security import verify_admin_token
+from app.core.security import admin_auth_required, verify_admin_token
 from app.core.timeframes import label_for_timeframe
 from app.services.trading_opportunities import build_trading_opportunities
 from app.schemas.config import (
@@ -39,6 +39,7 @@ async def bot_status(
         "trading_params": _trading_params_dict(settings),
         "last_cycle_summary": _last_cycle_summary(manager),
         "trading_opportunities": build_trading_opportunities(manager.last_result),
+        "auth_required": admin_auth_required(settings),
     }
 
 
@@ -81,7 +82,7 @@ async def get_trading_params(settings: SettingsDep) -> TradingParamsSchema:
     )
 
 
-@router.post("/trading-params")
+@router.post("/trading-params", dependencies=[Depends(verify_admin_token)])
 async def update_trading_params(
     body: TradingParamsUpdateSchema,
     settings: SettingsDep,
@@ -101,7 +102,7 @@ async def update_trading_params(
     return {"ok": True, "trading_params": _trading_params_dict(settings)}
 
 
-@router.post("/start")
+@router.post("/start", dependencies=[Depends(verify_admin_token)])
 async def start_bot(manager: BotManagerDep) -> dict:
     await manager.start()
     return {
@@ -111,13 +112,13 @@ async def start_bot(manager: BotManagerDep) -> dict:
     }
 
 
-@router.post("/stop")
+@router.post("/stop", dependencies=[Depends(verify_admin_token)])
 async def stop_bot(manager: BotManagerDep) -> dict:
     await manager.stop()
     return {"status": "stopped", "running": manager.is_running}
 
 
-@router.post("/run-once")
+@router.post("/run-once", dependencies=[Depends(verify_admin_token)])
 async def run_once(manager: BotManagerDep) -> dict:
     try:
         result = await manager.run_once()

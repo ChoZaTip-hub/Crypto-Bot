@@ -1,8 +1,9 @@
 """Coin scanner API."""
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends
 
 from app.api.deps import SessionDep, SettingsDep
+from app.core.security import verify_admin_token
 from app.services.coin_scanner_service import CoinScannerService
 from app.services.trading_universe_service import TradingUniverseService
 
@@ -37,7 +38,7 @@ async def scanner_status(settings: SettingsDep) -> dict:
     }
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(verify_admin_token)])
 async def scanner_run(session: SessionDep, settings: SettingsDep) -> dict:
     scanner = CoinScannerService(session, settings)
     snap = await scanner.scan()

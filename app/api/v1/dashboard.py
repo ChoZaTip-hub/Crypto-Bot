@@ -1,8 +1,9 @@
 """Dashboard aggregate API for the web UI."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import BackgroundManagerDep, BotManagerDep, SessionDep, SettingsDep
+from app.core.security import verify_admin_token
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.core.timeframes import BYBIT_TIMEFRAME_LABELS, label_for_timeframe
@@ -576,7 +577,7 @@ async def chart_data(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.post("/refresh-market")
+@router.post("/refresh-market", dependencies=[Depends(verify_admin_token)])
 async def refresh_market(
     session: SessionDep,
     settings: SettingsDep,

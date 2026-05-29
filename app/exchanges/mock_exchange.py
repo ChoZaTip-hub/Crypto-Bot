@@ -18,11 +18,19 @@ from app.utils.time import utc_now_ts
 
 
 class MockExchange(ExchangeBase):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        account_id: int = 1,
+        initial_balance: float | None = None,
+    ) -> None:
         self._connected = False
+        self._account_id = account_id
         self._positions: dict[str, PositionInfo] = {}
         settings = get_settings()
-        self._balance = settings.paper_initial_balance
+        self._balance = float(
+            initial_balance if initial_balance is not None else settings.paper_initial_balance
+        )
         self._prices: dict[str, float] = {
             "BTCUSDT": 65000.0,
             "ETHUSDT": 3500.0,

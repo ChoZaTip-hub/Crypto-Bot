@@ -1,4 +1,15 @@
 const API = "";
+const ADMIN_TOKEN_KEY = "crypto_bot_admin_token";
+
+function getAdminToken() {
+  return localStorage.getItem(ADMIN_TOKEN_KEY) || "";
+}
+
+function setAdminToken(value) {
+  const v = String(value || "").trim();
+  if (v) localStorage.setItem(ADMIN_TOKEN_KEY, v);
+  else localStorage.removeItem(ADMIN_TOKEN_KEY);
+}
 
 const TF_LABELS = {
   "1": "1m", "3": "3m", "5": "5m", "15": "15m", "30": "30m",
@@ -456,8 +467,11 @@ function showApiError(msg) {
 
 async function api(path, options = {}) {
   const opts = { ...options };
-  if (opts.method && opts.method !== "GET" && !opts.headers) {
-    opts.headers = { "Content-Type": "application/json" };
+  opts.headers = { ...(opts.headers || {}) };
+  const token = getAdminToken();
+  if (token) opts.headers["X-Admin-Token"] = token;
+  if (opts.method && opts.method !== "GET" && !opts.headers["Content-Type"]) {
+    opts.headers["Content-Type"] = "application/json";
   }
   let res;
   try {
@@ -490,19 +504,21 @@ async function api(path, options = {}) {
   return res.json();
 }
 
-async function withButton(btn, fn) {
+async function withButton(btn, fn, loadingLabel) {
   if (!btn) return;
-  const prev = btn.disabled;
+  const prevDisabled = btn.disabled;
+  const prevText = btn.textContent;
   btn.disabled = true;
+  if (loadingLabel) btn.textContent = loadingLabel;
   try {
     await fn();
     showApiError("");
   } catch (e) {
     console.error(e);
     showApiError(e.message || String(e));
-    alert("Ошибка: " + (e.message || e));
   } finally {
-    btn.disabled = prev;
+    btn.disabled = prevDisabled;
+    if (loadingLabel) btn.textContent = prevText;
   }
 }
 
@@ -520,8 +536,8 @@ function normalizeTimeframes(status, meta) {
 }
 
 function normalizeSymbols(status, meta) {
-  if (status?.symbols?.length) return status.symbols;
   if (meta?.symbols?.length) return meta.symbols;
+  if (status?.symbols?.length) return status.symbols;
   return ["BTCUSDT"];
 }
 
@@ -696,7 +712,9 @@ function renderSignal(signal) {
     el.textContent = "Сигналов пока нет";
     return;
   }
-  el.innerHTML = `<strong>${signal.action}</strong> · ${(signal.confidence * 100).toFixed(0)}%<br/>
+  el.innerHTML = `<strong>${escapeHtml(signal.action || "—")}</strong> · ${
+    signal.confidence != null ? (Number(signal.confidence) * 100).toFixed(0) + "%" : "—"
+  }<br/>
     <span class="hint">${escapeHtml(signal.reason || "")}</span>`;
 }
 
@@ -1569,6 +1587,14 @@ function bindControls() {
     userPinnedSymbol = !e.target.checked;
     if (!userPinnedSymbol) refreshAll();
   });
+  $("adminTokenInput")?.addEventListener("change", (e) => {
+    setAdminToken(e.target.value);
+  });
+  $("adminTokenSave")?.addEventListener("click", () => {
+    setAdminToken($("adminTokenInput")?.value || "");
+    showApiError("");
+    setStatusHint("Токен сохранён в браузере");
+  });
   $("timeframeSelect")?.addEventListener("change", () => {
     tvChartKey = "";
     lastLivePlan = null;
@@ -1602,6 +1628,11 @@ async function init() {
   }
 
   populateSymbols(normalizeSymbols(status, meta));
+  const adminInput = $("adminTokenInput");
+  if (adminInput) adminInput.value = getAdminToken();
+  if (status.auth_required && !getAdminToken()) {
+    showApiError("Задайте API_ADMIN_TOKEN в поле ниже (Дополнительно) для управления ботом.");
+  }
   const seedOpp =
     status.trading_opportunities ||
     (await loadScannerOpportunities());

@@ -1,10 +1,13 @@
 """Drawdown tracking."""
 
+
 class DrawdownTracker:
     def __init__(self) -> None:
         self._peak_equity: float = 0.0
 
-    def update(self, equity: float) -> float:
+    def update(self, equity: float, *, peak: float | None = None) -> float:
+        if peak is not None and peak > self._peak_equity:
+            self._peak_equity = peak
         if equity > self._peak_equity:
             self._peak_equity = equity
         if self._peak_equity <= 0:
